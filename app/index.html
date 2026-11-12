@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ULS tree height dashboard</title>
+<link rel="stylesheet" href="style.css">
+<script>
+  // Collect JS errors for the page and for the automated test.
+  window.__errors = [];
+  function __report(msg) {
+    window.__errors.push(String(msg));
+    if (document.body) document.body.dataset.errors = JSON.stringify(window.__errors);
+  }
+  window.onerror = function (m, src, line) { __report(m + " (" + (src || "").split("/").pop() + ":" + line + ")"); };
+  window.addEventListener("unhandledrejection", function (e) { __report("unhandled rejection: " + (e.reason && e.reason.message || e.reason)); });
+</script>
+</head>
+<body data-errors="[]" data-rendered="0">
+<header class="top">
+  <div class="top-row">
+    <div>
+      <h1 id="title">ULS tree height dashboard</h1>
+      <p class="sub" id="subtitle"></p>
+    </div>
+    <button class="btn" id="theme-toggle" type="button" aria-label="Switch between light and dark theme">Theme</button>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections"></nav>
+</header>
+<div class="filters" id="filters"></div>
+<div id="filter-note" hidden></div>
+<main id="main"></main>
+<script src="data.js"></script>
+<script src="plotly.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

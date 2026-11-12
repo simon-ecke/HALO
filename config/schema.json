@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Site configuration",
+  "type": "object",
+  "required": ["site", "paths", "field_columns", "plots", "grid", "matching", "cleaning", "dbh", "structure", "baseline"],
+  "additionalProperties": false,
+  "$defs": {
+    "pos": {"type": "number", "exclusiveMinimum": 0},
+    "frac": {"type": "number", "minimum": 0, "maximum": 1},
+    "nstr": {"type": "string", "minLength": 1},
+    "laz": {
+      "type": "object", "required": ["path", "instance_dim"], "additionalProperties": false,
+      "properties": {"path": {"type": "string", "minLength": 1}, "instance_dim": {"type": "string", "minLength": 1}}
+    },
+    "colmap": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+    "factors": {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0}}
+  },
+  "properties": {
+    "site": {
+      "type": "object", "required": ["id", "name", "crs"], "additionalProperties": false,
+      "properties": {"id": {"type": "string", "minLength": 1}, "name": {"type": "string"}, "crs": {"type": "string", "minLength": 1}}
+    },
+    "paths": {
+      "type": "object",
+      "required": ["output_dir", "field_tables", "sample_heights_table", "plot_corners", "sat_before"],
+      "additionalProperties": false,
+      "properties": {
+        "output_dir": {"type": "string", "minLength": 1},
+        "field_tables": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "sample_heights_table": {"type": "string", "minLength": 1},
+        "plot_corners": {"type": "string", "minLength": 1},
+        "sat_before": {"$ref": "#/$defs/laz"},
+        "sat_after": {"$ref": "#/$defs/laz"},
+        "ortho_before": {"type": "string", "minLength": 1},
+        "match_overrides": {"type": "string", "minLength": 1},
+        "manual_segments_dir": {"type": "string", "minLength": 1}
+      }
+    },
+    "field_columns": {
+      "type": "object", "required": ["layouts", "sample_heights", "corners"], "additionalProperties": false,
+      "properties": {
+        "layouts": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "columns", "dbh_year", "removal"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "file": {"type": "string", "minLength": 1},
+              "sheet": {"type": ["integer", "string"]},
+              "dbh_year": {"type": "integer"},
+              "columns": {
+                "$ref": "#/$defs/colmap",
+                "required": ["plot", "nr", "x", "y", "dbh_mm"],
+                "propertyNames": {"enum": ["plot", "nr", "species", "x", "y", "dbh_mm", "dbh_2020_mm", "height_vertex_m",
+                  "height_massband_m", "height_standing_sheet_m", "crown_base_cm", "stump_height_cm", "remark"]}
+              },
+              "factors": {"$ref": "#/$defs/factors"},
+              "earlier_removal_column": {"type": "string", "minLength": 1},
+              "removal": {
+                "type": "object", "required": ["column", "removed_value"], "additionalProperties": false,
+                "properties": {"column": {"type": "string", "minLength": 1}, "removed_value": {"type": ["number", "string"]}}
+              }
+            }
+          }
+        },
+        "sample_heights": {
+          "type": "object", "required": ["columns"], "additionalProperties": false,
+          "properties": {
+            "sheet": {"type": ["integer", "string"]},
+            "columns": {
+              "$ref": "#/$defs/colmap",
+              "required": ["plot", "nr", "x", "y", "height_vertex_m", "height_massband_m"],
+              "propertyNames": {"enum": ["plot", "nr", "x", "y", "height_vertex_m", "height_massband_m"]}
+            },
+            "factors": {"$ref": "#/$defs/factors"}
+          }
+        },
+        "corners": {
+          "type": "object", "required": ["columns"], "additionalProperties": false,
+          "properties": {
+            "sheet": {"type": ["integer", "string"]},
+            "columns": {
+              "$ref": "#/$defs/colmap",
+              "required": ["plot", "nr", "x", "y", "utm_x", "utm_y"],
+              "propertyNames": {"enum": ["plot", "nr", "x", "y", "utm_x", "utm_y"]}
+            }
+          }
+        }
+      }
+    },
+    "plots": {
+      "type": "object", "required": ["id_column", "y_mirrored"], "additionalProperties": false,
+      "properties": {
+        "id_column": {"type": "string", "minLength": 1},
+        "y_mirrored": {"type": "array", "items": {"type": "integer"}}
+      }
+    },
+    "grid": {
+      "type": "object", "required": ["aoi_buffer_m", "dtm_resolution_m", "chm_resolution_m", "removed_voxel_m"],
+      "additionalProperties": false,
+      "properties": {"aoi_buffer_m": {"type": "number", "minimum": 0}, "dtm_resolution_m": {"$ref": "#/$defs/pos"},
+                     "chm_resolution_m": {"$ref": "#/$defs/pos"}, "removed_voxel_m": {"$ref": "#/$defs/pos"}}
+    },
+    "matching": {
+      "type": "object",
+      "required": ["max_distance_m", "high_confidence_distance_m", "removed_threshold", "removal_penalty_m", "height_gate_rel",
+                   "control_shift_m", "gone_above", "standing_below"],
+      "additionalProperties": false,
+      "properties": {"max_distance_m": {"$ref": "#/$defs/pos"}, "high_confidence_distance_m": {"$ref": "#/$defs/pos"},
+                     "removed_threshold": {"$ref": "#/$defs/frac"}, "removal_penalty_m": {"type": "number", "minimum": 0},
+                     "height_gate_rel": {"$ref": "#/$defs/pos"}, "control_shift_m": {"$ref": "#/$defs/pos"},
+                     "gone_above": {"$ref": "#/$defs/frac"}, "standing_below": {"$ref": "#/$defs/frac"},
+                     "unmatched_figure_count": {"type": "integer", "minimum": 0}, "unmatched_figure_seed": {"type": "integer"},
+                     "stem_slice_m": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                     "column_profile": {"type": "object", "additionalProperties": false,
+                                        "properties": {"radius_m": {"$ref": "#/$defs/pos"}, "max_gap_m": {"$ref": "#/$defs/pos"},
+                                                       "min_height_m": {"type": "number"}, "min_points": {"type": "integer", "minimum": 1}}}}
+    },
+    "cleaning": {
+      "type": "object", "required": ["dbh_plausible_mm", "standing_height_dm_above"], "additionalProperties": false,
+      "properties": {"dbh_plausible_mm": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                     "standing_height_dm_above": {"$ref": "#/$defs/pos"},
+                     "dbh_class_edges_mm": {"type": "array", "items": {"type": "number"}, "minItems": 3}}
+    },
+    "dbh": {
+      "type": "object", "required": ["breast_height_m", "slice_half_height_m", "search_radius_m", "ellipse_axis_ratio"],
+      "additionalProperties": false,
+      "properties": {"breast_height_m": {"$ref": "#/$defs/pos"}, "slice_half_height_m": {"$ref": "#/$defs/pos"},
+                     "search_radius_m": {"$ref": "#/$defs/pos"}, "ellipse_axis_ratio": {"type": "number", "minimum": 1}}
+    },
+    "structure": {
+      "type": "object",
+      "required": ["competition_radius_m", "small_dbh_mm", "close_neighbour_m", "no_canopy_deficit_m", "chm_stem_radius_m",
+                   "edge_m", "min_stem_slices"],
+      "additionalProperties": false,
+      "properties": {"competition_radius_m": {"$ref": "#/$defs/pos"}, "small_dbh_mm": {"$ref": "#/$defs/pos"},
+                     "close_neighbour_m": {"$ref": "#/$defs/pos"}, "no_canopy_deficit_m": {"$ref": "#/$defs/pos"},
+                     "chm_stem_radius_m": {"$ref": "#/$defs/pos"}, "edge_m": {"type": "number", "minimum": 0},
+                     "min_stem_slices": {"type": "integer", "minimum": 1},
+                     "gap_height_m": {"$ref": "#/$defs/pos"}, "instance_radius_m": {"$ref": "#/$defs/pos"},
+                     "species_groups": {"type": "object", "additionalProperties": {"type": "string"}}}
+    },
+    "baseline": {
+      "type": "object", "required": ["windows", "min_height_m", "smoothing_m", "top_match_max_m", "top_found_distance_m"],
+      "additionalProperties": false,
+      "properties": {
+        "windows": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "object", "required": ["name", "diameter_m"], "additionalProperties": false,
+                    "properties": {"name": {"type": "string", "minLength": 1}, "diameter_m": {"$ref": "#/$defs/pos"},
+                                   "per_height_m": {"type": "number", "minimum": 0}}}
+        },
+        "min_height_m": {"$ref": "#/$defs/pos"}, "smoothing_m": {"type": "number", "minimum": 0},
+        "top_match_max_m": {"$ref": "#/$defs/pos"}, "top_found_distance_m": {"$ref": "#/$defs/pos"}
+      }
+    },
+    "identity": {
+      "type": "object", "additionalProperties": true,
+      "properties": {"control_directions": {"type": "integer", "minimum": 1}, "min_pairs": {"type": "integer", "minimum": 1},
+                     "neighbours_k": {"type": "integer", "minimum": 1}, "spread_floor_m": {"type": "number", "minimum": 0},
+                     "min_margin_m": {"type": "number", "minimum": 0}, "confirmed_min": {"type": "number"},
+                     "probable_min": {"type": "number"}, "ambiguous_min": {"type": "number"},
+                     "min_stem_points": {"type": "integer", "minimum": 0}, "require_mutual": {"type": "boolean"},
+                     "height_flag_rel": {"type": "number", "minimum": 0}, "dbh_flag_rel": {"type": "number", "minimum": 0}}
+    },
+    "samples": {
+      "type": "object", "additionalProperties": true,
+      "properties": {"radius_m": {"type": "number", "exclusiveMinimum": 0},
+                     "max_points_per_tree": {"type": "integer", "minimum": 1}}
+    },
+    "volume": {
+      "type": "object", "required": ["method"], "additionalProperties": true,
+      "properties": {"method": {"type": "string"}, "params_file": {"type": "string"},
+                     "min_trees_per_species": {"type": "integer", "minimum": 1},
+                     "parameter_diameter_unit": {"enum": ["cm", "mm", "m"]},
+                     "dbh_ratio_range": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                     "bootstrap_resamples": {"type": "integer", "minimum": 100},
+                     "bootstrap_seed": {"type": "integer"},
+                     "sensitivity": {"type": "object", "properties": {"height_m": {"type": "number"},
+                                     "dbh_mm": {"type": "number"}, "form_factor": {"type": "number"}}}}
+    },
+    "analyses": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "bootstrap": {"type": "object", "properties": {"n": {"type": "integer", "minimum": 100}, "seed": {"type": "integer"}}},
+        "noise_band_sd": {"$ref": "#/$defs/pos"},
+        "explain_height_diff_m": {"$ref": "#/$defs/pos"},
+        "sampling": {"type": "object", "properties": {"k": {"type": "array", "items": {"type": "integer", "minimum": 2}, "minItems": 1},
+                     "draws": {"type": "integer", "minimum": 100}, "seed": {"type": "integer"}, "within_m": {"$ref": "#/$defs/pos"}}},
+        "top_height": {"type": "object", "properties": {"trees_per_ha": {"type": "integer", "minimum": 1}}},
+        "detection_model": {"type": "object", "properties": {"size_column": {"type": "string"}, "competition_column": {"type": "string"},
+                            "relative_size_column": {"type": "string"}}},
+        "ledger": {"type": "object", "properties": {"routine_remark_tokens": {"type": "array", "items": {"type": "string"}}}},
+        "height_variants": {"type": "object", "properties": {"percentile": {"type": "number"}, "crown_radius_m": {"$ref": "#/$defs/pos"},
+                            "max_minutes": {"$ref": "#/$defs/pos"}}}
+      }
+    },
+    "effort": {"type": "object"},
+    "dashboard": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "sample_figures": {
+          "type": "object", "required": ["dir", "pattern"], "additionalProperties": false,
+          "properties": {"dir": {"type": "string", "minLength": 1},
+                         "pattern": {"type": "string", "minLength": 1},
+                         "extra_patterns": {"type": "array", "items": {"type": "string", "minLength": 1}}}
+        }
+      }
+    }
+  }
+}

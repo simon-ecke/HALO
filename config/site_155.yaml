@@ -1,0 +1,182 @@
+# Versuch 155 (EBE-e). ${HALO_DATA_ROOT} is the input data root, see README.
+site: {id: "155", name: "Versuch 155 EBE-e", crs: "EPSG:25832"}
+
+paths:
+  output_dir: outputs/app/site155            # relative to the project root
+  field_tables:                              # one inventory sheet per layout below
+    - '${HALO_DATA_ROOT}\00_field_data_tree_heights\155_EBEe_mitVertexund Maßband.xlsx'   # Parzellen 1-26
+    - '${HALO_DATA_ROOT}\00_field_data_tree_heights\155_EBEe-P27-45_done_ausg 1.xlsx'     # Parzellen 27-45
+  sample_heights_table: '${HALO_DATA_ROOT}\00_field_data_tree_heights\155_EBEe_mitVertexund Maßband.xlsx'
+  plot_corners: '${HALO_DATA_ROOT}\00_field_data_tree_heights\Parzelleneckpunkte_155.xlsx'
+  sat_before:
+    path: '${HALO_DATA_ROOT}\03_Data_output\03_SegmentAnyTree\20260225_EBE-e_155_L3_80H80O8ms_nonrep_SAT.laz'
+    instance_dim: PredInstance
+  sat_after:                                 # harvest evidence
+    path: '${HALO_DATA_ROOT}\03_Data_output\03_SegmentAnyTree\20260324_EBE-e_155_L3_80H80O8ms_nonrep_SAT.laz'
+    instance_dim: PredInstance
+
+field_columns:
+  # One layout per inventory sheet. "file" is the file name of an entry in paths.field_tables.
+  # columns: standard name -> sheet column. factors: standard name -> multiplier that gives the
+  # standard unit (default 1). removal.column marks trees removed in the harvest; a tree counts as
+  # removed when the cell equals removed_value. earlier_removal_column: any number in it means
+  # removed in an earlier thinning, the tree is dropped. Rows without a plot value are dropped.
+  # dbh_year is the year of the dbh column. Standard units: mm for dbh, m for heights; crown_base_cm
+  # and stump_height_cm are given in cm and converted to m by their factor 0.01.
+  layouts:
+    - name: parzellen_1_26
+      file: 155_EBEe_mitVertexund Maßband.xlsx
+      sheet: 0
+      dbh_year: 2025
+      columns:
+        plot: Parzelle
+        nr: Nr
+        species: fe_art
+        x: x
+        y: y
+        dbh_mm: DurchmesserUmfang_2025
+        dbh_2020_mm: DurchmesserUmfang_mm_2020
+        height_vertex_m: Gesamthöhe_m_Vertex
+        height_massband_m: Gesamtlänge_m_Maßband
+        height_standing_sheet_m: Höhe_2025
+        crown_base_cm: Kronenansatz_cm
+        stump_height_cm: Stumpfhöhe_cm
+        remark: Bemerkung
+      factors: {crown_base_cm: 0.01, stump_height_cm: 0.01}
+      earlier_removal_column: removal
+      removal: {column: removal_2026, removed_value: 1}
+    - name: parzellen_27_45
+      file: 155_EBEe-P27-45_done_ausg 1.xlsx
+      sheet: 0
+      dbh_year: 2026
+      columns:
+        plot: Parzelle
+        nr: Nr
+        species: fe_art
+        x: x
+        y: y
+        dbh_mm: DurchmesserUmfang_2026
+        dbh_2020_mm: DurchmesserUmfang_mm_2020
+        height_standing_sheet_m: Höhe_2026
+        remark: Bemerkung
+      earlier_removal_column: removal
+      removal: {column: removal Kronenansatz, removed_value: 1}   # 1 exactly where the remark is 'BAD'
+  # Sample trees with tape (Massband) and Vertex heights, read from paths.sample_heights_table
+  sample_heights:
+    sheet: 0
+    columns: {plot: Parzelle, nr: Nr, x: x, y: y, height_vertex_m: Gesamthöhe_m_Vertex, height_massband_m: Gesamtlänge_m_Maßband}
+  corners:                                   # plot corner points: local x/y and UTM
+    sheet: 0
+    columns: {plot: Parzelle, nr: Nr, x: x, y: y, utm_x: UTM_x, utm_y: UTM_y}
+
+plots:
+  id_column: Parzelle
+  y_mirrored: [41, 42, 43, 44, 45]           # local y runs from the opposite plot edge (y -> 30 - y)
+
+grid:
+  aoi_buffer_m: 20.0
+  dtm_resolution_m: 0.5
+  chm_resolution_m: 0.25
+  removed_voxel_m: 0.4                       # voxel size for "is this point gone after harvest"
+
+matching:
+  max_distance_m: 3.0                        # stem -> instance base
+  high_confidence_distance_m: 1.5            # 'detected' needs the base within this distance
+  removed_threshold: 0.5                     # instance counts as felled above this removed fraction
+  removal_penalty_m: 2.0                     # cost added when harvest evidence disagrees
+  height_gate_rel: 0.25                      # flag only: |LiDAR - field| / field
+  control_shift_m: 5.0                       # chance control: stems shifted by this distance
+  gone_above: 0.8                            # share of instance points gone after harvest: felled above
+  standing_below: 0.2                        # ... standing below
+  unmatched_figure_count: 10                 # random LiDAR instances without a field tree flagged for a QA figure
+  unmatched_figure_seed: 155
+  stem_slice_m: [1.0, 3.0]                   # slice (height above ground) that gives the stem base of a hand-segmented tree
+  column_profile: {radius_m: 1.0, max_gap_m: 1.5, min_height_m: 2.0, min_points: 50}   # fallback height of suppressed trees
+
+cleaning:
+  dbh_plausible_mm: [70, 1000]               # values outside are treated as typing errors
+  standing_height_dm_above: 100              # standing heights above this were typed in dm (316 = 31.6 m)
+  dbh_class_edges_mm: [0, 200, 300, 400, 500, 2000]   # DBH classes of the detection tables
+
+dbh:
+  breast_height_m: 1.3
+  slice_half_height_m: 0.25                  # slice from 1.05 to 1.55 m
+  search_radius_m: 1.0
+  ellipse_axis_ratio: 1.5                    # largest axis ratio accepted by the ellipse fit
+
+structure:
+  competition_radius_m: 5.0                  # neighbours within this distance count for the competition index
+  small_dbh_mm: 250                          # "small tree" for the per-Parzelle share
+  close_neighbour_m: 2.0
+  no_canopy_deficit_m: 6.0                   # canopy this far below expected tree height: no full-size tree
+  chm_stem_radius_m: 1.0
+  edge_m: 2.0                                # closer than this to the plot outline = edge tree
+  min_stem_slices: 3                         # stem found in at least this many of 8 slices
+  gap_height_m: 5.0                          # CHM below this counts as a gap (gap share per Parzelle)
+  instance_radius_m: 10.0                    # LiDAR instances within this distance of a stem describe its vertical structure
+  species_groups:                            # species name in the sheet -> group; anything else is 'other'
+    Fichte: spruce
+    Europäische Lärche: other conifers
+    Douglasie: other conifers
+    Kiefer: other conifers
+    Buche: broadleaves
+    Sonstige Laubhölzer: broadleaves
+
+baseline:
+  windows:                                   # local-maximum window = diameter_m + per_height_m * cell height
+    - {name: "LM 1.5 m", diameter_m: 1.5}
+    - {name: "LM 2 m", diameter_m: 2.0}
+    - {name: "LM 3 m", diameter_m: 3.0}
+    - {name: "LM 4 m", diameter_m: 4.0}
+    - {name: "LM 1.5 m + 0.08 h", diameter_m: 1.5, per_height_m: 0.08}
+  min_height_m: 3.0
+  smoothing_m: 0.25
+  top_match_max_m: 3.0                       # stem -> top, largest distance for the assignment
+  top_found_distance_m: 2.0                  # field tree counts as found if its top is within this of the stem
+
+identity:                                    # thresholds of core/identity.py
+  control_directions: 8
+  min_pairs: 5
+  neighbours_k: 5
+  spread_floor_m: 0.05
+  min_margin_m: 0.5
+  confirmed_min: 0.9
+  probable_min: 0.7
+  ambiguous_min: 0.3
+  min_stem_points: 20
+  require_mutual: true
+  height_flag_rel: 0.25
+  dbh_flag_rel: 0.25
+
+samples:                                     # core/samples.py: side-view points around each sample tree
+  radius_m: 4.0
+  max_points_per_tree: 1500
+
+volume:
+  method: form_factor
+  params_file: config/volume_form_factors.csv
+  min_trees_per_species: 20
+  parameter_diameter_unit: cm               # unit of d in the parameter_table method (cm, mm or m); volume is always m3, height m
+  dbh_ratio_range: [0.7, 1.4]                # median field/LiDAR DBH outside this: field value is probably a circumference, run stops
+  bootstrap_resamples: 2000
+  bootstrap_seed: 0
+  sensitivity: {height_m: 1.0, dbh_mm: 10.0, form_factor: 0.02}
+
+analyses:                                    # core/analyses.py
+  bootstrap: {n: 2000, seed: 0}
+  noise_band_sd: 1.96                        # error budget: ULS-tape differences inside +/- this x the RMS of the Vertex-tape differences
+  explain_height_diff_m: 1.0                 # sample trees: explanation text and ledger flag above this height difference
+  sampling: {k: [5, 10, 20, 33, 50, 100], draws: 2000, seed: 0, within_m: 1.0}
+  top_height: {trees_per_ha: 100}            # thickest trees per hectare, scaled to the plot area
+  detection_model: {size_column: dbh_field_mm, competition_column: hegyi, relative_size_column: rel_dbh}
+  ledger: {routine_remark_tokens: ["BAD", "2026", "!", ";"]}   # a remark holding only these is routine
+  height_variants: {percentile: 99, crown_radius_m: 1.5, max_minutes: 10}
+
+effort: {}
+
+dashboard:                                   # optional, used by scripts/build_dashboard.py
+  title: "Versuch 155: what is drone laser scanning worth?"
+  sample_figures:                            # existing per-tree images, copied to dist/<site>/img/
+    dir: outputs/site155_all/figures/qa_sample_trees
+    pattern: "tree_{tree_id}.png"
+    extra_patterns: ["tree_{tree_id}_chm_before_after.png"]
