@@ -6,6 +6,7 @@ Writes dist/<site_id>/ with index.html, app.js, style.css, data.js, plotly.min.j
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -33,9 +34,15 @@ def build(config_path, tables_dir=None, out_dir=None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     data, figs = build_data(cfg, tables_dir, out)
     write_data_js(data, out / "data.js")
-    for name in ("index.html", "app.js", "style.css"):
+    for name in ("app.js", "style.css"):
         shutil.copyfile(ROOT / "app" / name, out / name)
     shutil.copyfile(plotly_js_path(), out / "plotly.min.js")
+    # Version the file references so that a browser never mixes a new page with cached scripts or data
+    stamp = hashlib.sha256(b"".join((out / n).read_bytes() for n in ("data.js", "app.js", "style.css"))).hexdigest()[:10]
+    html = (ROOT / "app" / "index.html").read_text(encoding="utf-8")
+    for name in ("style.css", "data.js", "app.js"):
+        html = html.replace(f'"{name}"', f'"{name}?v={stamp}"')
+    (out / "index.html").write_text(html, encoding="utf-8")
     if figs:
         img = out / "img"
         img.mkdir(exist_ok=True)

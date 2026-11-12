@@ -41,11 +41,27 @@ def run(cfg, tables_dir=None, write_tables: bool = False, height_variants: bool 
         volume = None
     if volume is not None:
         entries += volume.compute_entries(cfg, tables_dir)
+    try:                                   # GRI volume functions; no entries without coefficient file and species codes
+        from core import volume_gri
+    except ImportError:
+        volume_gri = None
+    if volume_gri is not None:
+        entries += volume_gri.compute_entries(cfg, tables_dir)
+    try:                                   # volume increment (ForestElementsR); no entries without the exported files
+        from core import increment
+    except ImportError:
+        increment = None
+    if increment is not None:
+        entries += increment.compute_entries(cfg, tables_dir)
     if write_tables:
         paths = analyses.write_tables(cfg, tables_dir, rasters_dir=rasters_dir, height_variants=height_variants)
         print(f"{len(paths)} analysis tables written to {cfg.tables_dir}")
         if volume is not None and hasattr(volume, 'run_volume'):
             volume.run_volume(cfg, tables_dir)
+        if volume_gri is not None:
+            volume_gri.run_volume_gri(cfg, tables_dir)
+        if increment is not None:
+            increment.run_increment(cfg, tables_dir)
     out_dir = ROOT / 'outputs' / 'app' / 'site155' if tables_dir else cfg.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / 'stats.json'

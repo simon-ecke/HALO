@@ -34,6 +34,8 @@ STAGES = [
     ("samples", "core.samples"),
     ("identity", "core.identity"),
     ("volume", "core.volume"),
+    ("volume_gri", "core.volume_gri"),
+    ("increment", "core.increment"),
 ]
 
 

@@ -53,8 +53,8 @@
               "columns": {
                 "$ref": "#/$defs/colmap",
                 "required": ["plot", "nr", "x", "y", "dbh_mm"],
-                "propertyNames": {"enum": ["plot", "nr", "species", "x", "y", "dbh_mm", "dbh_2020_mm", "height_vertex_m",
-                  "height_massband_m", "height_standing_sheet_m", "crown_base_cm", "stump_height_cm", "remark"]}
+                "propertyNames": {"enum": ["plot", "nr", "species", "x", "y", "dbh_mm", "dbh_2020_mm",
+                  "height_vertex_m", "height_massband_m", "height_standing_sheet_m", "crown_base_cm", "stump_height_cm", "remark"]}
               },
               "factors": {"$ref": "#/$defs/factors"},
               "earlier_removal_column": {"type": "string", "minLength": 1},
@@ -180,6 +180,28 @@
                      "bootstrap_seed": {"type": "integer"},
                      "sensitivity": {"type": "object", "properties": {"height_m": {"type": "number"},
                                      "dbh_mm": {"type": "number"}, "form_factor": {"type": "number"}}}}
+    },
+    "volume_gri": {
+      "type": "object", "additionalProperties": true,
+      "properties": {"params_file": {"type": "string"},
+                     "species_codes": {"type": "object", "additionalProperties": {"type": "integer"}},
+                     "min_trees_per_species": {"type": "integer", "minimum": 1},
+                     "bootstrap_resamples": {"type": "integer", "minimum": 100},
+                     "bootstrap_seed": {"type": "integer"}}
+    },
+    "increment": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"stand_age_years": {"type": ["number", "null"], "exclusiveMinimum": 0},
+                     "age_reference_year": {"type": "integer"},
+                     "age_per_parzelle": {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0}},
+                     "age_grid": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+                     "horizon_years": {"type": "number", "exclusiveMinimum": 0},
+                     "params_dir": {"type": "string"},
+                     "height_2020_column": {"type": ["string", "object"], "additionalProperties": {"type": "string"}},
+                     "growing_seasons": {"type": "object", "propertyNames": {"pattern": "^[0-9]{4}$"},
+                                         "additionalProperties": {"type": "number", "exclusiveMinimum": 0}},
+                     "removed_growth_share": {"type": "number", "minimum": 0, "maximum": 1},
+                     "dbh_change_plausible_mm": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}
     },
     "analyses": {
       "type": "object", "additionalProperties": false,

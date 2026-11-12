@@ -98,6 +98,8 @@ p { margin: 6px 0; }
 .story .num { font-weight: 700; color: var(--accent); }
 .callout { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
 .callout.info { background: var(--surface-2); border-color: var(--line); }
+.params { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 16px; margin: 6px 0 10px; }
+.params label { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 14px; }
 .callout ul { margin: 4px 0 0 18px; padding: 0; }
 .tablewrap { overflow-x: auto; max-width: 100%; }
 table.dt { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -143,3 +145,17 @@ dl.kv dt { color: var(--ink-2); } dl.kv dd { margin: 0; }
 @media (max-width: 560px) {
   h1 { font-size: 17px; } .tile .val { font-size: 24px; } main { padding: 8px 12px 40px; }
 }
+
+/* Increment (Zuwachs) section of the GRI volume tab */
+.inc h2 { margin-top: 28px; }
+.inc-row { display: flex; gap: 10px 24px; flex-wrap: wrap; align-items: center; margin: 8px 0 12px; }
+.inc-row label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.inc input[type="number"] { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; width: 90px; }
+.inc-ages { margin-top: 6px; }
+.inc-ages summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.inc-ages .params { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.inc-ages .params input[type="number"] { width: 70px; }
+.inc-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+.inc-row[hidden], .legend-note[hidden] { display: none; }
+.inc-measured input[type="number"] { width: 60px; }
+.inc-measured input[type="range"] { width: 140px; }

@@ -131,6 +131,70 @@ def load_inventory(cfg) -> pd.DataFrame:
     return result
 
 
+SURVEY_2020_COLUMNS = ["tree_id", "parzelle", "nr", "species", "dbh_2020_mm", "height_2020_m", "removed_earlier"]
+
+
+def survey_2020_frame(df: pd.DataFrame, cols: dict, factors: dict | None = None,
+                      earlier_column: str | None = None) -> pd.DataFrame:
+    """Every tree of the 2020 survey of one sheet, with the standard column names. Pure function.
+
+    Unlike `load_layout`, trees of earlier thinnings are kept and flagged in ``removed_earlier`` (any number in
+    ``earlier_column``). Rows without a plot value are dropped. Heights are returned as typed in the sheet (converted
+    to m by the unit factor only); the cleaning of decimetre values is left to the caller.
+    """
+    factors = factors or {}
+    df = df[df[cols["plot"]].notna()].copy()
+
+    def num(std):
+        return _numeric(df, cols.get(std), float(factors.get(std, 1.0)))
+
+    if earlier_column is not None and earlier_column in df.columns:
+        earlier = pd.to_numeric(df[earlier_column], errors="coerce").notna()
+    else:
+        earlier = pd.Series(False, index=df.index)
+    plot = pd.to_numeric(df[cols["plot"]]).astype("Int64").astype(str)
+    nr = pd.to_numeric(df[cols["nr"]]).astype("Int64").astype(str)
+    return pd.DataFrame({
+        "tree_id": plot + "_" + nr,
+        "parzelle": plot,
+        "nr": nr,
+        "species": df[cols["species"]] if "species" in cols else np.nan,
+        "dbh_2020_mm": num("dbh_2020_mm"),
+        "height_2020_m": num("height_2020_m"),
+        "removed_earlier": earlier.astype(bool),
+    })[SURVEY_2020_COLUMNS].reset_index(drop=True)
+
+
+def load_survey_2020(cfg) -> pd.DataFrame:
+    """All trees of the 2020 survey from every layout, including those removed in an earlier thinning.
+
+    Columns: tree_id (as in the inventory), parzelle, nr, species, dbh_2020_mm, height_2020_m, removed_earlier.
+    Reads Excel. The sheet column of the 2020 height is ``increment.height_2020_column`` (one name for all layouts, or a
+    mapping layout name -> column).
+    """
+    height = (cfg.raw.get("increment") or {}).get("height_2020_column")
+    parts = []
+    for layout in cfg.field_columns.layouts:
+        cols = layout.columns.to_dict()
+        column = height.get(layout.name) if isinstance(height, dict) else height
+        if column:
+            cols["height_2020_m"] = column
+        factors = layout.factors.to_dict() if "factors" in layout else {}
+        earlier = layout.earlier_removal_column if "earlier_removal_column" in layout else None
+        df = pd.read_excel(_field_table_path(cfg, layout.file), sheet_name=_sheet(layout))
+        parts.append(survey_2020_frame(df, cols, factors, earlier))
+    result = pd.concat(parts, ignore_index=True)
+    # A tree of an earlier thinning may carry the number of a standing tree; its id then gets the suffix "_earlier"
+    # so that the ids of the standing trees stay those of the inventory.
+    standing_ids = set(result.loc[~result["removed_earlier"], "tree_id"])
+    clash = result["removed_earlier"] & result["tree_id"].isin(standing_ids)
+    result.loc[clash, "tree_id"] = result.loc[clash, "tree_id"] + "_earlier"
+    if result["tree_id"].duplicated().any():
+        dups = result.loc[result["tree_id"].duplicated(keep=False), "tree_id"].unique().tolist()
+        raise ValueError(f"Duplicate tree ids in the 2020 survey: {dups}")
+    return result
+
+
 def read_corners_excel(cfg) -> pd.DataFrame:
     """Plot corner points from the Excel sheet (always reads Excel)."""
     spec = cfg.field_columns.corners
@@ -197,7 +261,7 @@ def compute_inventory(cfg) -> pd.DataFrame:
 
 
 def run_inventory(cfg) -> None:
-    """Write field_trees.csv (and work/plot_corners.csv for the later stages)."""
+    """Write field_trees.csv, field_trees_2020.csv (and work/plot_corners.csv for the later stages)."""
     # Always read the corners from Excel here and store them for the stages that run after geopandas.
     corners_csv(cfg).parent.mkdir(parents=True, exist_ok=True)
     read_corners_excel(cfg).to_csv(corners_csv(cfg), index=False)
@@ -205,3 +269,5 @@ def run_inventory(cfg) -> None:
     inputs = [*cfg.paths.field_tables, cfg.paths.plot_corners]
     cache.cached_table(cfg, "field_trees.csv", ["site", "field_columns", "plots", "cleaning"], inputs,
                        lambda: compute_inventory(cfg))
+    cache.cached_table(cfg, "field_trees_2020.csv", ["site", "field_columns", "increment"], list(cfg.paths.field_tables),
+                       lambda: load_survey_2020(cfg))

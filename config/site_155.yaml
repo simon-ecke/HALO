@@ -162,6 +162,31 @@ volume:
   bootstrap_seed: 0
   sensitivity: {height_m: 1.0, dbh_mm: 10.0, form_factor: 0.02}
 
+volume_gri:                                  # core/volume_gri.py: Bavarian GRI volume functions (Franz et al. 1973)
+  params_file: config/volume_gri_coefficients.csv
+  species_codes:                             # field species name -> GRI species group (tum_wwk_short code)
+    Fichte: 1
+    Kiefer: 3
+    Europäische Lärche: 4
+    Buche: 5
+    Douglasie: 7
+    Sonstige Laubhölzer: 8
+  min_trees_per_species: 20
+  bootstrap_resamples: 2000
+  bootstrap_seed: 0
+
+increment:                                   # core/increment.py: volume increment by three methods (ForestElementsR)
+  stand_age_years: null                      # approximate stand age at age_reference_year; null = not set (set it in the dashboard)
+  age_reference_year: 2026
+  age_per_parzelle: {}                       # optional overrides, Parzelle -> age
+  age_grid: [15, 160]                        # ages for which the age-dependent methods are tabulated
+  horizon_years: 5                           # prediction horizon of the tree growth functions
+  params_dir: config                         # folder with the exported fer_* files
+  height_2020_column: height_m_2020          # sheet column with the 2020 tree height (all layouts), or {layout name: column}
+  growing_seasons: {2025: 5, 2026: 5}        # growing seasons between the 2020 survey and the survey of that year
+  removed_growth_share: 0.0                  # share of the period the trees removed earlier are assumed to have grown (0 = removed at the 2020 survey)
+  dbh_change_plausible_mm: [-10, 150]        # total DBH change between the surveys; trees outside are excluded as recording errors
+
 analyses:                                    # core/analyses.py
   bootstrap: {n: 2000, seed: 0}
   noise_band_sd: 1.96                        # error budget: ULS-tape differences inside +/- this x the RMS of the Vertex-tape differences

@@ -66,3 +66,10 @@ docs/ANALYSES.md
 docs/*.pdf
 notebooks/02_results_155.ipynb
 notebooks/03_slides_155.ipynb
+
+# GRI coefficients exported from ForestElementsR (GPL package data, regenerate with scripts/export_gri_coefficients.R)
+config/volume_gri_coefficients.csv
+config/fer_*.csv
+config/fer_*.json
+tests/data/v_gri_reference.csv
+tests/data/fer_*_reference.csv

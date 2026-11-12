@@ -218,6 +218,123 @@ def _volume(cfg, td) -> dict:
     return out
 
 
+GRI_METHOD = ("Merchantable volume over bark (Derbholz mit Rinde) from the Bavarian GRI volume functions of Franz et al. (1973), "
+              "as implemented in v_gri() of the R package ForestElementsR (Biber and Toraño Caicoya 2025):ln(f) = sum over i, j of C[i][j] (ln d)^i (ln h)^j "
+              "with d the diameter at breast height in cm, h the height in m and C a 3 x 3 coefficient matrix per species group; "
+              "V = max(0, pi / 40000 d^2 exp(ln f)), V = 0 for d < 6.1 cm or h < 1.3 m.")
+
+
+def _volume_gri(cfg, td) -> dict:
+    """Per-tree inputs, coefficients and summaries for the GRI volume tab; {available: False} when they do not exist."""
+    from core.volume_gri import _setup, load_coefficients  # noqa: F401  (private helper shared with the stage runner)
+
+    if not has_table(cfg, "wood_volume_gri_per_tree.csv", td):
+        return {"available": False}
+    coefficients, codes, problem = _setup(cfg)
+    if problem or coefficients is None:
+        return {"available": False}
+    t = read_table(cfg, "wood_volume_gri_per_tree.csv", td)
+    d_ok = pd.to_numeric(t["dbh_field_mm"], errors="coerce").where(t["dbh_field_valid"].astype(bool))
+    src = t["height_source"].map({"uls": 1, "modelled": 2}).fillna(0)
+    cols = pd.DataFrame({
+        "id": t["tree_id"], "p": t["parzelle"].map(_int_or_str), "sp": t["species"], "dF": d_ok,
+        "dU": pd.to_numeric(t["dbh_uls_mm"], errors="coerce"), "hU": t["height_uls_m"], "hs": src,
+        "hMod": t["height_used_m"].where(src == 2), "hP": t["height_practice_m"], "hM": t["height_massband"],
+        "hV": t["height_vertex"], "hF": t["height_field_m"], "det": t["detection"].fillna(""),
+        "rem": t["removed_2026"].astype(bool).astype(int)})
+    rounding = {"dF": 0, "dU": 0, "hU": 2, "hMod": 2, "hP": 2, "hM": 2, "hV": 2, "hF": 2, "hs": 0, "rem": 0}
+    names = coefficients.get("species_name", pd.Series([""] * len(coefficients)))
+    groups = [{"code": int(c), "name": str(n) if isinstance(n, str) else ""}
+              for c, n in zip(coefficients["species_code"], names)]
+    coef = {str(int(r["species_code"])): [round(float(r[c]), 12) for c in COEF_COLS] for _, r in coefficients.iterrows()}
+    out: dict = {
+        "available": True, "method": GRI_METHOD, "coefficients": coef, "groups": groups,
+        "default_codes": {str(k): int(v) for k, v in codes.items() if v is not None}, "trees": frame_columnar(cols, rounding),
+    }
+    if has_table(cfg, "volume_gri_per_parzelle.csv", td):
+        pp = read_table(cfg, "volume_gri_per_parzelle.csv", td)
+        pp["parzelle"] = pp["parzelle"].map(_int_or_str)
+        out["per_parzelle"] = frame_records(pp, default_nd=4)
+        areas = pp.dropna(subset=["area_ha"])
+        out["areas_ha"] = {str(r.parzelle): _clean(r.area_ha, 5) for r in areas.itertuples()}
+        out["area_total_ha"] = _clean(float(areas["area_ha"].sum()), 5) if len(areas) else None
+    if has_table(cfg, "volume_gri_per_species.csv", td):
+        out["per_species"] = frame_records(read_table(cfg, "volume_gri_per_species.csv", td), default_nd=4)
+    factors = _efm_factors(cfg)
+    if factors:
+        out["efm_factors"] = factors
+    out["increment"] = _increment(cfg, td)
+    return out
+
+
+def _efm_factors(cfg) -> dict:
+    """Factor from standing volume over bark (Vfm m. R.) to harvest volume under bark (Efm o. R.) per GRI species code."""
+    from core.increment import _params_dir
+
+    path = _params_dir(cfg) / "fer_harvest_reduction.csv"
+    if not path.is_file():
+        return {}
+    red = pd.read_csv(path)
+    return {str(int(r["species_code"])): _clean(float(r["factor"]), 6) for _, r in red.iterrows() if pd.notna(r["factor"])}
+
+
+INCREMENT_METHOD_TEXTS = {
+    "yield_table": "Yield table: stand-level increment of the table of the main species at the site index derived from the height of the "
+                   "quadratic-mean-diameter tree and the assumed stand age, multiplied by the stocking level where that is below 1.",
+    "tree_growth": "Tree growth functions: every tree grows with the German national forest inventory (GNFI 3) functions for the horizon "
+                   "and the volume is recomputed with the GRI functions; there is no mortality and no removal.",
+    "measured": "Measured: classical periodic increment of the two surveys, V alive at the current survey plus V removed minus V alive "
+                "at the 2020 survey, with one height-diameter curve per survey. It needs no stand age.",
+}
+
+
+def _increment(cfg, td) -> dict:
+    """Increment tables of the three methods for the GRI tab; {available: False} when they do not exist."""
+    if not (has_table(cfg, "increment_by_age.csv", td) and has_table(cfg, "increment_measured.csv", td)):
+        return {"available": False}
+    s = dict(cfg.raw.get("increment") or {})
+    ba = read_table(cfg, "increment_by_age.csv", td)
+    ba["parzelle"] = ba["parzelle"].map(lambda v: "stand" if str(v) == "stand" else str(int(float(v))))
+    a0, a1 = int(ba["age"].min()), int(ba["age"].max())
+    ages = list(range(a0, a1 + 1))
+    arrays = {"si": ("site_index", 2), "ex": ("si_extrapolated", 0), "ao": ("age_outside_table", 0), "pt": ("pai_table_m3_ha_yr", 3),
+              "mt": ("mai_table_m3_ha_yr", 3), "sl": ("stocking_level", 3), "py": ("pai_yield_table_m3_ha_yr", 3),
+              "pg": ("pai_tree_growth_m3_ha_yr", 3), "pye": ("pai_yield_table_efm_m3_ha_yr", 3), "pge": ("pai_tree_growth_efm_m3_ha_yr", 3)}
+    by_age: dict = {}
+    for p, g in ba.groupby("parzelle", sort=False):
+        g = g.assign(age=g["age"].astype(int)).drop_duplicates("age").set_index("age").reindex(ages)
+        first = g.iloc[0]
+        entry = {"main_species": first["main_species"] if isinstance(first["main_species"], str) else "",
+                 "yield_table": next((v for v in g["yield_table"] if isinstance(v, str) and v), ""),
+                 "d_q_cm": _clean(first["d_q_cm"], 2), "h_q_m": _clean(first["h_q_m"], 2), "ba_m2_ha": _clean(first["ba_m2_ha"], 2),
+                 "efm_factor": _clean(first["efm_factor"], 4)}
+        for key, (col, nd) in arrays.items():
+            col_v = g[col]
+            entry[key] = [None if pd.isna(v) else (int(bool(v)) if nd == 0 else round(float(v), nd)) for v in col_v]
+        by_age[p] = entry
+    measured = read_table(cfg, "increment_measured.csv", td)
+    measured["parzelle"] = measured["parzelle"].map(lambda v: "stand" if str(v) == "stand" else str(int(float(v))))
+    ref = int(s.get("age_reference_year", 2026))
+    per = measured[measured["parzelle"] != "stand"].dropna(subset=["survey_year", "growing_seasons"])
+    seasons = {str(int(y)): float(g) for y, g in zip(per["survey_year"], per["growing_seasons"])}
+    for k, v in (s.get("growing_seasons") or {}).items():
+        if str(int(k)) in seasons:
+            seasons[str(int(k))] = float(v)
+    for c in ("survey_year", "n_survivors", "n_removed_earlier", "n_missing", "n_excluded"):
+        measured[c] = measured[c].map(lambda v: None if pd.isna(v) else int(v)).astype(object)
+    default_age = s.get("stand_age_years")
+    return {
+        "available": True, "age_grid": [a0, a1], "horizon_years": float(s.get("horizon_years", 5)), "reference_year": ref,
+        "default_age": float(default_age) if default_age is not None else None,
+        "default_age_per_parzelle": {str(k): float(v) for k, v in (s.get("age_per_parzelle") or {}).items()},
+        "by_age": by_age, "measured": frame_records(measured, default_nd=6),
+        "growing_seasons": seasons, "removed_growth_share": float(s.get("removed_growth_share", 0.0)), "methods": INCREMENT_METHOD_TEXTS,
+    }
+
+
+COEF_COLS = [f"c{i}{j}" for i in (1, 2, 3) for j in (1, 2, 3)]
+
+
 def build_data(cfg, tables_dir=None, out_dir: Path | None = None) -> tuple[dict, list[str]]:
     """Return (data object, list of sample figure files to copy)."""
     td = tables_dir
@@ -266,6 +383,7 @@ def build_data(cfg, tables_dir=None, out_dir: Path | None = None) -> tuple[dict,
         "samples": samples,
         "sample_points": points,
         "volume": _volume(cfg, td),
+        "volume_gri": _volume_gri(cfg, td),
         "identity": {},
         "methods": _methods(cfg),
         "ledger": [],

@@ -15,7 +15,7 @@ The workflow was developed for the trial site Versuch 155 (45 plots) but is driv
 3. **Matching.** Field stems are matched to LiDAR instances by stem-base distance under removal constraints. Each match is assigned a detection class (detected, uncertain, not detected) and, where applicable, a cause derived from stand structure (competition, suppression, plot edge).
 4. **Stem and DBH.** Stems are searched in a breast-height slice of the normalised point cloud and the DBH is estimated from circle and ellipse fits.
 5. **Identity.** A geometry-only score rates whether the matched instance is the same tree as the field record, independent of height and DBH, so that accuracy statistics are not biased by the matching itself.
-6. **Comparison.** Height, DBH and stem volume are compared on the matched trees; height accuracy on the sample trees uses the tape length as reference and the Vertex–tape difference as the terrestrial noise floor. Confidence intervals are obtained by bootstrapping.
+6. **Comparison.** Height, DBH and stem volume are compared on the matched trees; height accuracy on the sample trees uses the tape length as reference and the Vertex–tape difference as the terrestrial noise floor. Confidence intervals are obtained by bootstrapping. Stem volume is computed with the Bavarian GRI volume functions (Franz et al. 1973; ForestElementsR), with a simple form-factor method kept for comparison. Stem volume is reported as Vfm m. R. and Efm o. R., and the periodic annual increment is estimated from a yield table, from tree growth functions and from the repeated diameter measurements.
 
 A raster-based local-maximum detection on the canopy height model is included as a baseline. The individual methods are documented in [docs/METHODS.md](docs/METHODS.md) and [docs/METHODS_identity.md](docs/METHODS_identity.md).
 
@@ -65,9 +65,19 @@ Pipeline stages cache their results and are recomputed only when their inputs or
 
 Matches can be corrected without overwriting the automatic result: a row in `match_overrides.csv` (`tree_id,instance`, instance `0` for no LiDAR tree) assigns a different instance, and a manually segmented tree saved as `manual_trees/tree_<plot>_<nr>.laz` replaces the instance. Corrections are kept as separate tiers in the output tables.
 
+### ForestElementsR parameters
+
+The GRI coefficients and the other ForestElementsR parameters are not part of this repository. Create them once with R (>= 4.4) and the package ForestElementsR installed:
+
+```bash
+Rscript scripts/export_gri_coefficients.R
+```
+
+This writes `config/volume_gri_coefficients.csv` and the reference grids `tests/data/v_gri_reference.csv` and `tests/data/fer_*_reference.csv` used by the tests. The same script also exports the harvest reduction factors (`config/fer_harvest_reduction.csv`), the yield tables (`config/fer_yield_tables.json`) and the growth-function parameters (`config/fer_gnfi3_parameters.csv`). The files `config/fer_*` are not under version control. Assign the GRI species group of each field species in `volume_gri.species_codes` of the site configuration. Without the coefficient file the stage `volume_gri` is skipped and the rest of the pipeline is unaffected. Without the reduction factors the harvest volumes (Efm o. R.) are left out of `volume_gri`; without the yield tables and growth-function parameters the stage `increment` is skipped.
+
 ### Dashboard
 
-`scripts/build_dashboard.py` writes a self-contained static site to `dist/<site_id>/` (HTML, JavaScript, data file, Plotly and the sample-tree figures). It needs no server and opens directly in a browser. It covers detection, height and DBH accuracy, the identity classes, wood volume and a per-tree view of the sample trees with a 2D and 3D point view.
+`scripts/build_dashboard.py` writes a self-contained static site to `dist/<site_id>/` (HTML, JavaScript, data file, Plotly and the sample-tree figures). It needs no server and opens directly in a browser. It covers detection, height and DBH accuracy, the identity classes, wood volume (the tabs "Wood volume (old)" with the form-factor method and "Wood volume (GRI)" with Vfm, Efm and the increment for an adjustable stand age) and a per-tree view of the sample trees with a 2D and 3D point view.
 
 ### Notebooks
 

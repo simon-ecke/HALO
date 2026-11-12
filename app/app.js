@@ -94,7 +94,7 @@ let C = {};
 function loadColors() {
   C = { ink: css("--ink"), ink2: css("--ink-2"), grid: css("--grid"), line: css("--line"), surface: css("--surface"),
         c: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => css("--c" + i)), neutral: css("--neutral"), lo: css("--seq-lo"), hi: css("--seq-hi") };
-  C.uls = C.c[0]; C.ground = C.c[1]; C.vertex = C.c[2];
+  C.uls = C.c[0]; C.ground = C.c[1]; C.vertex = C.c[2]; C.practice = C.c[3];
   C.idc = { confirmed: C.c[0], probable: C.c[2], ambiguous: C.c[3], rejected: C.c[7], unmatched: C.neutral };
   C.det = { detected: C.c[0], uncertain: C.c[3], "not detected": C.c[7] };
   C.species = {};
@@ -158,7 +158,7 @@ function tile(label, e, o = {}) {
   t.appendChild(h("div", { class: "val", text: o.value || fmtVal(e) }));
   const ci = fmtCI(e);
   if (ci && !o.noci) t.appendChild(h("div", { class: "ci", text: ci }));
-  if (o.extra) t.appendChild(h("div", { class: "extra" }, o.extra.filter((x) => x.e).map((x) => h("span", null, x.label + " ", h("b", { text: fmtVal(x.e) })))));
+  if (o.extra) t.appendChild(h("div", { class: "extra" }, o.extra.filter((x) => x.e || x.text).map((x) => h("span", null, x.label + " ", h("b", { text: x.text || fmtVal(x.e) })))));
   t.appendChild(h("div", { class: "st", text: o.statement || e.statement }));
   t.appendChild(h("div", { class: "nn", text: "n = " + (e.n != null ? e.n : "–") + (e.subset ? " · " + e.subset.replace(/_/g, " ") : "") }));
   if (filtersActive() && o.follows !== true) t.appendChild(h("div", { class: "nofilter", text: "does not follow the filters" }));
@@ -229,7 +229,8 @@ const TREE_COL_LABELS = null;
 const TABS = [
   ["overview", "Overview", renderOverview], ["data", "Data", renderData], ["match", "Match confidence", renderMatch],
   ["height", "Height: ULS vs Maßband vs Vertex", renderHeight], ["wins", "Where ULS wins", renderWins],
-  ["samples", "Sample explorer", renderSamples], ["volume", "Wood volume", renderVolume], ["methods", "Methods and caveats", renderMethods],
+  ["samples", "Sample explorer", renderSamples], ["volume", "Wood volume (old)", renderVolume], ["volume_gri", "Wood volume (GRI)", renderVolumeGri],
+["methods", "Methods and caveats", renderMethods],
 ];
 
 /* ---------- shared chart builders ---------- */
@@ -991,6 +992,453 @@ function renderVolume(root) {
   c.appendChild(h("p", { class: "cap", text: stmt("volume.modelled_trees") + " " + stmt("volume.field_excluded") }));
   root.appendChild(h("h2", { text: "Downloads" }));
   root.appendChild(downloadRow());
+}
+
+/* ======================================================================
+   Wood volume (GRI): the volume functions are evaluated here so that the species groups can be changed
+   ====================================================================== */
+const G = D.volume_gri || { available: false };
+const GT = G.available ? G.trees.rows.map((r) => { const o = {}; G.trees.cols.forEach((c, i) => (o[c] = r[i])); return o; }) : [];
+const GRI_MIN_D_CM = 6.1, GRI_MIN_H_M = 1.3;
+// GRI volume in m3 (Franz et al. 1973, as v_gri() in ForestElementsR): code = species group, dmm = DBH in mm, hm = height in m.
+function griVolume(code, dmm, hm) {
+  const c = G.coefficients[code];
+  if (!c || !isNum(dmm) || !isNum(hm)) return NaN;
+  const d = dmm / 10;
+  if (d < GRI_MIN_D_CM || hm < GRI_MIN_H_M) return 0;
+  const ld = Math.log(d), lh = Math.log(hm), a = [1, ld, ld * ld], b = [1, lh, lh * lh];
+  let s = 0;
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) s += c[3 * i + j] * a[i] * b[j];
+  return Math.max(0, Math.PI / 40000 * d * d * Math.exp(s));
+}
+// Three volumes per tree (plus the sample-tree volumes at the tape and Vertex heights) for a species -> group mapping.
+// Efm o. R. (harvest volume under bark) = Vfm m. R. x factor of the species group (v_red_harvest_ubark in ForestElementsR).
+const GEFM = G.available && G.efm_factors && Object.keys(G.efm_factors).length ? G.efm_factors : null;
+function griCalc(map) {
+  return GT.map((t) => {
+    const code = map[t.sp], hF = t.hs === 1 ? t.hU : t.hs === 2 ? t.hMod : null, fac = GEFM && isNum(GEFM[code]) ? GEFM[code] : NaN;
+    const r = { t, vF: griVolume(code, t.dF, hF), vU: t.hs === 1 ? griVolume(code, t.dU, t.hU) : NaN, vP: griVolume(code, t.dF, t.hP),
+      vM: griVolume(code, t.dF, t.hM), vV: griVolume(code, t.dF, t.hV), vH: griVolume(code, t.dF, t.hU) };
+    r.eF = r.vF * fac; r.eU = r.vU * fac; r.eP = r.vP * fac;
+    return r;
+  });
+}
+const griSum = (rows, k) => sum(rows.map((r) => r[k]).filter(isNum));
+const griDefaultMap = () => { const m = {}; speciesOrder.forEach((s) => (m[s] = G.default_codes[s] != null ? String(G.default_codes[s]) : "")); return m; };
+let griMap = null;
+function griReadHash(def) {
+  const m = Object.assign({}, def);
+  (HASH.gri || "").split(",").forEach((kv) => { const i = kv.lastIndexOf(":"), s = kv.slice(0, i), v = kv.slice(i + 1); if (i > 0 && s in m && (v === "" || G.coefficients[v])) m[s] = v; });
+  return m;
+}
+
+function renderVolumeGri(root) {
+  root.appendChild(h("div", { class: "callout" }, h("b", { text: "Read this first. " }),
+    "Standing merchantable volume over bark (Derbholz mit Rinde) from the GRI volume functions of Franz et al. (1973) as implemented in v_gri() of the R package ForestElementsR (Biber and Toraño Caicoya 2025). It is reported as the Vorrat in Vorratsfestmeter, \"Vfm m. R.\" (m³ standing volume over bark). The harvest volume under bark, Erntefestmeter \"Efm o. R.\", is the Vfm multiplied by a reduction factor of the species group (harvest loss and bark, v_red_harvest_ubark in ForestElementsR). Trees below 6.1 cm DBH have a volume of 0. Three volumes are computed for every tree. Field: field DBH and ULS height (a modelled height where no ULS instance is matched). ULS: ULS DBH and ULS height, matched trees only. Practice: field DBH and a height from a height-diameter curve fitted on the field-measured standing heights and applied to all trees, which is what an inventory without laser scanning would compute."));
+  if (!G.available) {
+    root.appendChild(h("div", { class: "callout info" }, h("b", { text: "Not available for this build. " }),
+      "To enable this tab, create the coefficient file with ", h("code", { text: "Rscript scripts/export_gri_coefficients.R" }), ", set ", h("code", { text: "volume_gri.species_codes" }),
+      " in the site configuration (field species to GRI species group), run the pipeline stage ", h("code", { text: "volume_gri" }), " and rebuild the dashboard."));
+    return;
+  }
+  const def = griDefaultMap(), species = speciesOrder.filter((s) => s in def);
+  if (!griMap) griMap = griReadHash(def);
+  const isDefault = () => species.every((s) => griMap[s] === def[s]);
+  const groupName = (code) => { const g = G.groups.find((x) => String(x.code) === code); return g ? code + " " + g.name : "none"; };
+  const calcDef = griCalc(def);
+  // consistency of the browser calculation with the Python statistics (default mapping)
+  const checks = [["volume_gri.total.field_with_modelled.stand", "vF"], ["volume_gri.total.uls.stand", "vU"], ["volume_gri.total.practice.stand", "vP"]]
+    .concat(GEFM ? [["volume_gri.efm.total.field_with_modelled.stand", "eF"], ["volume_gri.efm.total.uls.stand", "eU"], ["volume_gri.efm.total.practice.stand", "eP"]] : [])
+    .map(([id, k]) => ({ id, js: griSum(calcDef, k), py: S(id) && S(id).value })).filter((x) => isNum(x.py) && x.py !== 0);
+  const maxdiff = checks.length ? Math.max(...checks.map((x) => Math.abs(x.js / x.py - 1))) : NaN;
+  if (isNum(maxdiff)) root.setAttribute("data-gri-maxdiff", String(maxdiff));
+
+  const pc = card(root, "Parameters", "GRI species group used for each field species. Changing a group recomputes all three volumes (Vfm m. R.) and the Efm o. R. for every tree in the browser.");
+  const selects = {};
+  const grid = h("div", { class: "params" });
+  species.forEach((s) => {
+    const sel = h("select", { "aria-label": "GRI species group for " + s }, h("option", { value: "", text: "no group (no volume)" }),
+      G.groups.map((g) => h("option", { value: String(g.code), text: g.code + " " + g.name })));
+    sel.value = griMap[s];
+    sel.addEventListener("change", () => { griMap[s] = sel.value; HASH.gri = isDefault() ? "" : species.map((x) => x + ":" + griMap[x]).join(","); writeHash(); draw(); });
+    selects[s] = sel;
+    grid.appendChild(h("label", null, s + " ", sel));
+  });
+  pc.appendChild(grid);
+  pc.appendChild(h("button", { class: "btn", type: "button", onclick: () => { griMap = Object.assign({}, def); species.forEach((s) => (selects[s].value = def[s])); HASH.gri = ""; writeHash(); draw(); } }, "Reset to defaults"));
+  pc.appendChild(h("p", { class: "legend-note", text: "Defaults come from the site configuration. A species without a group gets no volume. The chosen groups are kept in the page address (key gri) when they differ from the defaults." }));
+
+  if (isNum(maxdiff) && maxdiff > 0.001) root.appendChild(h("div", { class: "callout warn" }, h("b", { text: "Consistency warning. " }),
+    "With the default groups the browser calculation differs from the Python statistics by " + (maxdiff * 100).toFixed(3) + " % (more than 0.1 %)."));
+  const dyn = h("div");
+  root.appendChild(dyn);
+  root.appendChild(h("p", { class: "legend-note", text: G.method }));
+  let incRedraw = null;
+
+  function draw() {
+    dyn.innerHTML = "";
+    const calc = isDefault() ? calcDef : griCalc(griMap), dflt = isDefault();
+    const fk = (value, unit, n, statement) => ({ value, unit, n, statement });
+    const tot = { F: griSum(calc, "vF"), U: griSum(calc, "vU"), P: griSum(calc, "vP"), eF: griSum(calc, "eF"), eU: griSum(calc, "eU"), eP: griSum(calc, "eP") };
+    const nOf = (k) => calc.filter((r) => isNum(r[k])).length, area = G.area_total_ha;
+    const perHa = (v) => (area ? fk(v / area, "m3/ha") : null);
+    if (!dflt) dyn.appendChild(h("div", { class: "callout info" }, h("span", { class: "badge", text: "Recalculated" }), " Recalculated in the browser with a changed species mapping; no confidence intervals."));
+    const g = h("div", { class: "grid tiles" });
+    dyn.appendChild(g);
+    const vfm = (e, nd = 1) => (e && isNum(e.value) ? f(e.value, nd) + " Vfm" : "–");
+    const vfmHaTxt = (e) => (e && isNum(e.value) ? f(e.value, 1) + " Vfm/ha" : null);
+    const volTile = (label, key, id, k) => {
+      const e = dflt ? S(id) : fk(tot[key], "m3", nOf(k), `With the changed species groups, the ${label.toLowerCase()} is ${f(tot[key], 1)} Vfm m. R. from ${nOf(k)} trees.`);
+      const ph = dflt ? S(id.replace("total.", "per_ha.")) : perHa(tot[key]);
+      return tile(label, e, { value: vfm(e), extra: [{ label: "per ha", e: ph, text: vfmHaTxt(ph) }] });
+    };
+    const efmTile = (label, key, id, k) => {
+      const e = dflt && S(id) ? S(id) : fk(tot[key], "m3", nOf(k), `With the changed species groups, the ${label.toLowerCase()} is ${f(tot[key], 1)} Efm o. R. from ${nOf(k)} trees.`);
+      const ph = dflt && S(id.replace("total.", "per_ha.")) ? S(id.replace("total.", "per_ha.")) : perHa(tot[key]);
+      return tile(label, e, { value: e && isNum(e.value) ? f(e.value, 1) + " Efm" : "–", extra: [{ label: "per ha", e: ph, text: ph && isNum(ph.value) ? f(ph.value, 1) + " Efm/ha" : null }] });
+    };
+    const dU = tot.U - tot.F, dP = tot.P - tot.F, oldF = S("volume.total.field_with_modelled.stand");
+    const gapE = dflt ? S("volume_gri.gap.total") : fk(dU, "m3", nOf("vU"), `With the changed species groups the ULS stand volume is ${f(Math.abs(dU), 1)} m³ ${dU >= 0 ? "above" : "below"} the field stand volume.`);
+    const prE = dflt ? S("volume_gri.practice_vs_field.relative_bias", "all") : fk(tot.F ? dP / tot.F : NaN, "share", nOf("vP"), `With the changed species groups the practice stand volume is ${f(Math.abs(dP), 1)} m³ ${dP >= 0 ? "above" : "below"} the field stand volume.`);
+    const oldE = oldF && isNum(oldF.value) ? (dflt && S("volume_gri.vs_old.field") ? S("volume_gri.vs_old.field") : fk(tot.F - oldF.value, "m3", nOf("vF"), `The GRI field stand volume is ${f(tot.F, 1)} m³, against ${f(oldF.value, 1)} m³ with the old method.`)) : null;
+    g.append(volTile("Vorrat (Vfm m. R.), field", "F", "volume_gri.total.field_with_modelled.stand", "vF"), volTile("Vorrat (Vfm m. R.), ULS", "U", "volume_gri.total.uls.stand", "vU"),
+      volTile("Vorrat (Vfm m. R.), practice", "P", "volume_gri.total.practice.stand", "vP"));
+    if (GEFM) g.append(efmTile("Harvest volume (Efm o. R.), field", "eF", "volume_gri.efm.total.field_with_modelled.stand", "eF"), efmTile("Harvest volume (Efm o. R.), ULS", "eU", "volume_gri.efm.total.uls.stand", "eU"),
+      efmTile("Harvest volume (Efm o. R.), practice", "eP", "volume_gri.efm.total.practice.stand", "eP"));
+    g.append(
+      tile("ULS minus field", gapE, { value: f(dU, 1, true) + " Vfm", noci: true, extra: [{ label: "relative", e: fk(tot.F ? dU / tot.F : NaN, "share") }], statement: gapE && gapE.statement }),
+      tile("Practice minus field", prE, { value: pct(tot.F ? dP / tot.F : NaN, 1), extra: [{ label: "absolute", text: f(dP, 1, true) + " Vfm", e: fk(dP, "m3") }] }),
+      tile("GRI vs old method (field total)", oldE, { value: oldE && pct(tot.F / oldF.value - 1), noci: true }));
+
+    // per species
+    const g1 = h("div", { class: "grid wide" });
+    dyn.appendChild(g1);
+    let c = card(g1, "Per species", "Total Vorrat (Vfm m. R.) per species with the group used (all trees; the Parzelle filter does not apply), and the harvest volume (Efm o. R.) of the field volume with the factor of the group. Differences are relative to the field volume.");
+    const rowsS = species.map((s) => { const r = calc.filter((x) => x.t.sp === s), v = { F: griSum(r, "vF"), U: griSum(r, "vU"), P: griSum(r, "vP"), E: griSum(r, "eF") };
+      const code = griMap[s], fac = GEFM && isNum(GEFM[code]) ? GEFM[code] : null;
+      return { s, n: r.length, grp: groupName(griMap[s]), F: v.F, U: v.U, P: v.P, E: GEFM ? v.E : null, fac, du: v.F ? (v.U / v.F - 1) * 100 : null, dp: v.F ? (v.P / v.F - 1) * 100 : null }; }).sort((a, b) => b.F - a.F);
+    c.appendChild(mkTable([{ k: "s", label: "Species", cls: "l" }, { k: "n", label: "Trees" }, { k: "grp", label: "GRI group", cls: "l" }, { k: "F", label: "Field (Vfm)", fmt: (r) => f(r.F, 1) },
+      { k: "U", label: "ULS (Vfm)", fmt: (r) => f(r.U, 1) }, { k: "P", label: "Practice (Vfm)", fmt: (r) => f(r.P, 1) },
+      ...(GEFM ? [{ k: "E", label: "Field (Efm o. R.)", fmt: (r) => f(r.E, 1) }, { k: "fac", label: "Efm / Vfm", fmt: (r) => f(r.fac, 3) }] : []),
+      { k: "du", label: "ULS vs field (%)", fmt: (r) => f(r.du, 1, true) }, { k: "dp", label: "Practice vs field (%)", fmt: (r) => f(r.dp, 1, true) }], rowsS));
+    c.appendChild(h("p", { class: "legend-note", text: "The ULS volume covers matched trees only; the field and practice volumes cover all trees with a valid field DBH." }));
+
+    // per Parzelle
+    c = card(g1, "Per Parzelle: Vorrat per hectare", "Field, ULS and practice Vorrat (Vfm m. R. per ha). Follows the Parzelle filter.");
+    const ps = parzF().map((p) => String(p.parzelle)).filter((p) => isNum(G.areas_ha && G.areas_ha[p]));
+    const ph = (k) => ps.map((p) => sum(calc.filter((r) => String(r.t.p) === p).map((r) => r[k]).filter(isNum)) / G.areas_ha[p]);
+    plot(c, [{ type: "bar", name: "field", x: ps, y: ph("vF"), marker: { color: C.ground } }, { type: "bar", name: "ULS", x: ps, y: ph("vU"), marker: { color: C.uls } },
+      { type: "bar", name: "practice", x: ps, y: ph("vP"), marker: { color: C.practice } }],
+    { barmode: "group", xaxis: { title: "Parzelle", type: "category", tickfont: { size: 9 } }, yaxis: { title: "Vorrat (Vfm m. R. per ha)" } });
+
+    // per-tree scatter
+    const g2 = h("div", { class: "grid" });
+    dyn.appendChild(g2);
+    const inP = (r) => F.p === "all" || String(r.t.p) === F.p;
+    const scat = (title, cap, k, label, color) => {
+      const cc = card(g2, title, cap), ts = calc.filter((r) => inP(r) && isNum(r.vF) && isNum(r[k]));
+      const mx = Math.max(0.5, ...ts.map((r) => Math.max(r.vF, r[k]))) * 1.05;
+      plot(cc, [{ type: "scatter", mode: "lines", x: [0, mx], y: [0, mx], line: { color: C.ink2, dash: "dot", width: 1 }, name: "1:1 line", hoverinfo: "skip" },
+        { type: "scatter", mode: "markers", name: label + " (n=" + ts.length + ")", x: ts.map((r) => r.vF), y: ts.map((r) => r[k]), text: ts.map((r) => r.t.id), marker: { color, size: 4, opacity: 0.6 }, hovertemplate: "%{text}<br>field %{x:.3f} Vfm, " + label + " %{y:.3f} Vfm<extra></extra>" }],
+      { xaxis: { title: "Field Vorrat per tree (Vfm m. R.)", range: [0, mx] }, yaxis: { title: label + " Vorrat per tree (Vfm m. R.)", range: [0, mx], scaleanchor: "x" } }, { cls: "tall" });
+    };
+    scat("Per tree: practice volume against field volume", "Each point is one tree with both volumes. The practice height comes from the field height-diameter curve. Follows the Parzelle filter.", "vP", "practice", C.practice);
+    scat("Per tree: ULS volume against field volume", "Each point is one matched tree; both volumes use the ULS height, so the difference comes from the DBH. Follows the Parzelle filter.", "vU", "ULS", C.uls);
+
+    // height-diameter
+    c = card(g2, "Heights against field DBH", "Field-measured standing heights, the heights of the practice curve and the ULS heights, by field DBH. These heights do not depend on the species groups.");
+    const hr = GT.filter((t) => (F.p === "all" || String(t.p) === F.p) && isNum(t.dF));
+    const hp = (k, sel) => { const a = hr.filter((t) => isNum(t[k]) && (!sel || sel(t))); return { x: a.map((t) => t.dF / 10), y: a.map((t) => t[k]), text: a.map((t) => t.id) }; };
+    const hm = (name, o, mk) => Object.assign({ type: "scatter", mode: "markers", name: name + " (n=" + o.x.length + ")", hovertemplate: "%{text}<br>DBH %{x:.1f} cm, height %{y:.1f} m<extra>" + name + "</extra>" }, o, { marker: mk });
+    plot(c, [hm("field-measured", hp("hF"), { color: C.ground, size: 5, opacity: 0.6 }), hm("practice curve", hp("hP"), { color: C.practice, size: 4, symbol: "x", opacity: 0.8 }),
+      hm("ULS", hp("hU", (t) => t.hs === 1), { color: C.uls, size: 4, opacity: 0.5 })],
+    { xaxis: { title: "Field DBH (cm)" }, yaxis: { title: "Tree height (m)" } }, { cls: "tall" });
+
+    // sample trees
+    c = card(g2, "Sample trees: volume with three heights", "Vorrat at the same field DBH with the Maßband height, the Vertex height and the ULS height (Vfm m. R. per tree). Follows the Parzelle filter.");
+    const ss = calc.filter((r) => inP(r) && isNum(r.vH) && (isNum(r.vM) || isNum(r.vV))).sort((a, b) => (a.t.id > b.t.id ? 1 : -1)), ids = ss.map((r) => r.t.id);
+    if (ss.length) plot(c, [{ type: "scatter", mode: "markers", name: "Maßband height", x: ids, y: ss.map((r) => r.vM), marker: { color: C.ground, size: 9, symbol: "square" } },
+      { type: "scatter", mode: "markers", name: "Vertex height", x: ids, y: ss.map((r) => r.vV), marker: { color: C.vertex, size: 9, symbol: "diamond" } },
+      { type: "scatter", mode: "markers", name: "ULS height", x: ids, y: ss.map((r) => r.vH), marker: { color: C.uls, size: 9 } }],
+    { xaxis: { title: "Sample tree", type: "category", tickangle: -60, tickfont: { size: 9 } }, yaxis: { title: "Vorrat per tree (Vfm m. R.)" }, margin: { b: 70 } }, { cls: "tall" });
+    else noData(c, "No sample trees match the current filter.");
+
+    // consistency
+    dyn.appendChild(h("p", { class: "legend-note", text: isNum(maxdiff)
+      ? "Consistency: with the default groups the browser calculation differs from the Python statistics by at most " + (maxdiff * 100).toFixed(4) + " % in the stand totals (Vfm m. R. and Efm o. R.; field, ULS, practice)." : "No Python statistics are available to check the browser calculation against." }));
+    if (incRedraw) incRedraw(calc);
+  }
+  incRedraw = buildIncrement(root, { isDefault, area: G.area_total_ha });
+  draw();
+}
+
+/* ======================================================================
+   Increment (Zuwachs) of the GRI volume tab: three methods, stand age as an input
+   ====================================================================== */
+const INC = { init: false, age: null, ages: {}, zm: "all" };
+const INC_METHODS = [["yield", "Yield table", 4], ["growth", "Tree growth functions", 5], ["measured", "Measured 2020–2025/26", 6]];
+const INC_MODES = INC_METHODS.concat([["all", "Compare all", null]]);
+const incLabel = (k) => INC_METHODS.find((m) => m[0] === k)[1];
+const incCol = (k) => C.c[INC_METHODS.find((m) => m[0] === k)[2]];
+const incTextKey = { yield: "yield_table", growth: "tree_growth", measured: "measured" };
+
+function buildIncrement(root, info) {
+  const I = G.increment;
+  const sec = h("section", { class: "inc" });
+  root.appendChild(sec);
+  sec.appendChild(h("h2", { text: "Increment (Zuwachs)" }));
+  if (!I || !I.available) {
+    sec.appendChild(h("div", { class: "callout info" }, h("b", { text: "Increment not available for this build. " }),
+      "The increment tables are missing. Run the pipeline stage ", h("code", { text: "increment" }), " (it needs the exported ForestElementsR files) and rebuild the dashboard."));
+    return null;
+  }
+  const BA = I.by_age, [a0, a1] = I.age_grid, ref = I.reference_year, pk = Object.keys(BA).filter((k) => k !== "stand");
+  const M = {};
+  I.measured.forEach((r) => (M[String(r.parzelle)] = r));
+  const nF = GT.filter((t) => isNum(t.dF)).length;
+  // Measured increment (two surveys): recalculated from the ledger columns for any growing seasons and share of the period of the trees removed earlier.
+  // pai = (survivor_growth + share x v_removed_2020 x survivor_rel_growth) / seasons / area, summed over the Parzellen of `keys` (null = all).
+  const GS0 = Object.assign({}, I.growing_seasons || {}), syears = Object.keys(GS0).sort(), RG0 = isNum(I.removed_growth_share) ? I.removed_growth_share : 0;
+  const mRows = I.measured.filter((r) => String(r.parzelle) !== "stand");
+  const calcM = (keys, gs, rg) => {
+    const o = { area: 0, num: 0, t1: 0, t2: 0, rem: 0, rem0: 0, stat: 0, dbh: 0, nS: 0, efm: 0, nR: 0, nM: 0, nX: 0, seasons: new Set(), n: 0 };
+    mRows.forEach((r) => {
+      if (keys && !keys.includes(String(r.parzelle))) return;
+      const sec = gs[String(r.survey_year)];
+      if (!(sec > 0) || !(r.area_ha > 0)) return;
+      const rel = isNum(r.survivor_rel_growth) ? r.survivor_rel_growth : 0, d0 = r.growing_seasons || sec;
+      o.n++; o.area += r.area_ha; o.seasons.add(sec);
+      o.num += (r.survivor_growth_m3 + rg * r.v_removed_2020_m3 * rel) / sec;
+      o.t1 += r.v_alive_t1_m3; o.t2 += r.v_alive_t2_m3; o.rem0 += r.v_removed_2020_m3;
+      o.rem += r.v_removed_2020_m3 * (1 + rg * rel);
+      o.stat += (r.pai_static_curve_m3_ha_yr || 0) * r.area_ha * d0 / sec;
+      if (isNum(r.dbh_increment_mm_yr)) { o.dbh += r.dbh_increment_mm_yr * d0 / sec * r.n_survivors; o.nS += r.n_survivors; }
+      o.efm += (r.efm_factor || 0) * r.area_ha;
+      o.nR += r.n_removed_earlier; o.nM += r.n_missing; o.nX += r.n_excluded; o.ns = (o.ns || 0) + r.n_survivors;
+    });
+    if (!o.n) return null;
+    o.pai = o.num / o.area; o.efmf = o.efm / o.area; o.paiE = o.pai * o.efmf;
+    o.paiStatic = o.stat / o.area; o.dbhMm = o.nS ? o.dbh / o.nS : NaN;
+    o.incr = o.t2 + o.rem - o.t1;
+    return o;
+  };
+  const allKeys = mRows.map((r) => String(r.parzelle));
+  sec.setAttribute("data-increment-measured", (() => { const c = calcM(null, GS0, RG0); return c ? c.pai.toFixed(4) : ""; })());
+  if (!INC.init) {
+    INC.init = true;
+    const ha = HASH.age;
+    INC.age = ha !== undefined ? (ha !== "" && isFinite(+ha) ? +ha : null) : I.default_age;
+    INC.ages = {};
+    if (HASH.ages !== undefined) (HASH.ages || "").split(",").forEach((kv) => { const [p, a] = kv.split(":"); if (pk.includes(p) && a !== "" && isFinite(+a)) INC.ages[p] = +a; });
+    else Object.entries(I.default_age_per_parzelle || {}).forEach(([p, a]) => { if (pk.includes(p) && isNum(a)) INC.ages[p] = a; });
+    INC.zm = INC_MODES.some((m) => m[0] === HASH.zm) ? HASH.zm : "all";
+    INC.gs = Object.assign({}, GS0);
+    if (HASH.gs) HASH.gs.split(",").forEach((kv) => { const [y, s] = kv.split(":"); if (y in GS0 && s !== "" && isFinite(+s) && +s >= 1 && +s <= 10) INC.gs[y] = Math.round(+s); });
+    INC.rg = HASH.rg !== undefined && HASH.rg !== "" && isFinite(+HASH.rg) ? Math.min(1, Math.max(0, +HASH.rg)) : RG0;
+  }
+  const gsDefault = () => syears.every((y) => INC.gs[y] === GS0[y]) && INC.rg === RG0;
+  const sync = () => {
+    HASH.gs = syears.every((y) => INC.gs[y] === GS0[y]) ? "" : syears.map((y) => y + ":" + INC.gs[y]).join(",");
+    HASH.rg = INC.rg === RG0 ? "" : String(INC.rg);
+    HASH.age = isNum(INC.age) ? String(INC.age) : "";
+    HASH.ages = pk.filter((p) => isNum(INC.ages[p])).map((p) => p + ":" + INC.ages[p]).join(",");
+    HASH.zm = INC.zm === "all" ? "" : INC.zm;
+    writeHash();
+  };
+  const clampAge = (a) => Math.min(a1, Math.max(a0, Math.round(a)));
+  const FIELDS = ["si", "ex", "ao", "pt", "mt", "sl", "py", "pg", "pye", "pge"];
+  const rowAt = (k, age) => { const e = BA[k], i = clampAge(age) - a0, r = {}; FIELDS.forEach((c) => (r[c] = e[c][i])); return r; };
+  const agePz = (p) => (isNum(INC.ages[p]) ? INC.ages[p] : isNum(INC.age) ? INC.age : null);
+  const anyOverride = () => pk.some((p) => isNum(INC.ages[p]));
+  // Stand values: the precomputed stand row when all Parzellen share the trial age, otherwise the area-weighted mean over the Parzellen.
+  const standAt = () => {
+    if (!anyOverride()) return isNum(INC.age) ? Object.assign(rowAt("stand", INC.age), { yt: BA.stand.yield_table }) : null;
+    const as = pk.map(agePz);
+    if (as.some((a) => a == null)) return null;
+    const rows = pk.map((p, i) => rowAt(p, as[i])), w = pk.map((p) => G.areas_ha[p]);
+    const wm = (c) => { let s = 0, ws = 0; rows.forEach((r, i) => { if (isNum(r[c]) && isNum(w[i])) { s += r[c] * w[i]; ws += w[i]; } }); return ws ? s / ws : null; };
+    const out = {};
+    ["si", "sl", "pt", "mt", "py", "pg", "pye", "pge"].forEach((c) => (out[c] = wm(c)));
+    out.ex = rows.some((r) => r.ex === 1) ? 1 : 0; out.ao = rows.some((r) => r.ao === 1) ? 1 : 0;
+    out.yt = unique(pk.map((p) => BA[p].yield_table).filter(Boolean)).join("; ");
+    return out;
+  };
+
+  // ----- controls (built once, so that typing keeps the focus) -----
+  const ctl = card(sec, "Parameters of the increment", "Increment of the standing volume in Vfm m. R. per ha and year; the harvest volume (Efm o. R.) follows with the volume-weighted reduction factor. The yield table and the tree growth functions need the approximate stand age, the measured increment does not.");
+  const segBtns = INC_MODES.map(([k, lab]) => h("button", { type: "button", "aria-pressed": String(INC.zm === k), "data-method": k, text: lab, onclick: () => {
+    INC.zm = k; segBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.method === k))); sync(); showParams(); redraw(); } }));
+  const ageInput = (value, onChange, label) => {
+    const inp = h("input", { type: "number", min: String(a0), max: String(a1), step: "1", inputmode: "numeric", "aria-label": label });
+    inp.value = isNum(value) ? String(value) : "";
+    inp.addEventListener("input", () => { const v = inp.value.trim(); onChange(v !== "" && isFinite(+v) ? +v : null); sync(); redraw(); });
+    return inp;
+  };
+  const trial = ageInput(INC.age, (v) => (INC.age = v), `Stand age (years, in ${ref})`);
+  const pzInputs = {};
+  const pzGrid = h("div", { class: "params" });
+  pk.forEach((p) => { pzInputs[p] = ageInput(INC.ages[p], (v) => { if (v == null) delete INC.ages[p]; else INC.ages[p] = v; }, "Age of Parzelle " + p); pzGrid.appendChild(h("label", null, "Parzelle " + p, pzInputs[p])); });
+  const det = h("details", { class: "inc-ages", open: anyOverride() ? "" : null }, h("summary", { text: "Age per Parzelle (optional)" }),
+    h("p", { class: "legend-note", text: "An empty field uses the stand age above. The stand value is the area-weighted mean over the Parzellen, each at its own age." }), pzGrid,
+    h("button", { class: "btn", type: "button", text: "Clear", onclick: () => { INC.ages = {}; pk.forEach((p) => (pzInputs[p].value = "")); sync(); redraw(); } }));
+  ctl.appendChild(h("div", { class: "inc-row" }, h("div", { class: "seg", role: "group", "aria-label": "Increment method" }, segBtns), h("label", null, `Stand age (years, in ${ref})`, trial)));
+  ctl.appendChild(det);
+  // parameters of the measured method: growing seasons per survey year, growth of the trees removed earlier
+  const gsInputs = {}, mParams = h("div", { class: "inc-row inc-measured" });
+  syears.forEach((y) => {
+    const ps = mRows.filter((r) => String(r.survey_year) === y).map((r) => +r.parzelle).filter((v) => isFinite(v));
+    const span = ps.length ? ` (Parzellen ${Math.min(...ps)}–${Math.max(...ps)})` : "";
+    const inp = h("input", { type: "number", min: "1", max: "10", step: "1", inputmode: "numeric", "aria-label": `Growing seasons 2020 to the ${y} survey` });
+    inp.value = String(INC.gs[y]);
+    inp.addEventListener("input", () => { const v = inp.value.trim(); if (v !== "" && isFinite(+v) && +v >= 1 && +v <= 10) { INC.gs[y] = Math.round(+v); sync(); redraw(); } });
+    gsInputs[y] = inp;
+    mParams.appendChild(h("label", null, `Growing seasons 2020 to the ${y} survey${span}`, inp));
+  });
+  const rgOut = h("b", { text: f(INC.rg, 1) });
+  const rgInp = h("input", { type: "range", min: "0", max: "1", step: "0.1", "aria-label": "Growth of the trees removed earlier (share of the period)" });
+  rgInp.value = String(INC.rg);
+  rgInp.addEventListener("input", () => { INC.rg = Math.round(+rgInp.value * 10) / 10; rgOut.textContent = f(INC.rg, 1); sync(); redraw(); });
+  mParams.appendChild(h("label", null, "Growth of the trees removed earlier (share of the period)", rgInp, rgOut));
+  mParams.appendChild(h("button", { class: "btn", type: "button", text: "Reset", onclick: () => {
+    syears.forEach((y) => { INC.gs[y] = GS0[y]; gsInputs[y].value = String(GS0[y]); });
+    INC.rg = RG0; rgInp.value = String(RG0); rgOut.textContent = f(RG0, 1); sync(); redraw(); } }));
+  const mHelp = h("p", { class: "legend-note", text: "The inventory records neither the number of growing seasons between the surveys nor when the trees flagged as removed left the stand. 0 = removed at the 2020 survey, no growth; 1 = grew like the surviving trees until the current survey." });
+  const showParams = () => { const on = INC.zm === "measured" || INC.zm === "all"; mParams.hidden = !on; mHelp.hidden = !on; };
+  ctl.appendChild(mParams);
+  ctl.appendChild(mHelp);
+  showParams();
+  const dyn = h("div");
+  sec.appendChild(dyn);
+  let last = null;
+
+  function redraw() {
+    dyn.innerHTML = "";
+    if (!last) return;
+    const calc = last, area = info.area, vfmHa = area ? griSum(calc, "vF") / area : NaN;
+    const methods = INC.zm === "all" ? INC_METHODS.map((m) => m[0]) : [INC.zm];
+    const needAge = methods.some((m) => m !== "measured"), st = standAt(), hasAge = isNum(INC.age);
+    if (hasAge) sec.setAttribute("data-increment-age", String(INC.age)); else sec.removeAttribute("data-increment-age");
+    sec.setAttribute("data-increment-methods", methods.join(","));
+    const note = (cls, bold, text) => dyn.appendChild(h("div", { class: "callout " + cls }, h("b", { text: bold + " " }), text));
+    if (needAge && !st) note("info", "Stand age needed.", hasAge || anyOverride() ? "Enter the stand age, or an age for every Parzelle, to show the predicted increment." : "Enter the approximate stand age to show the predicted increment");
+    if (hasAge && (INC.age < a0 || INC.age > a1)) note("warn", "Age outside the range.", `The age grid covers ${a0} to ${a1} years; the nearest age is used.`);
+
+    const mKeys = parzF().map((p) => String(p.parzelle)).filter((p) => allKeys.includes(p)), cm = calcM(mKeys, INC.gs, INC.rg);
+    const mExact = gsDefault() && F.p === "all";
+    // values of the stand per method: v in Vfm/ha/yr, e in Efm/ha/yr
+    const vals = (m) => {
+      if (m === "measured") return cm ? { v: cm.pai, e: cm.paiE } : null;
+      return st ? (m === "yield" ? { v: st.py, e: st.pye } : { v: st.pg, e: st.pge }) : null;
+    };
+    const caveat = (m) => (I.methods && I.methods[incTextKey[m]]) || "";
+    const entry = (value, statement, n) => ({ value, unit: "", n: n != null ? n : nF, statement });
+    const share = (v) => (isNum(v) && isNum(vfmHa) && vfmHa ? v / vfmHa : NaN);
+    const vf = (v, nd = 2) => (isNum(v) ? f(v, nd) + " Vfm/ha/yr" : "–");
+    const ef = (v, nd = 2) => (isNum(v) ? f(v, nd) + " Efm/ha/yr" : "–");
+    const g = h("div", { class: "grid tiles" });
+    dyn.appendChild(g);
+    const statFor = (m, text) => { const s = m === "measured" && mExact ? S("increment.measured.stand.pai") : null;
+      if (s && isNum(s.value)) return Object.assign({}, s, { statement: text });
+      return entry(vals(m) && vals(m).v, text, m === "measured" && cm ? cm.ns : undefined); };
+    const mTile = (m, label, kind) => {
+      const x = vals(m);
+      if (!x) return tile(label, entry(NaN, "needs the stand age"), { value: "–", noci: true, statement: "Needs the stand age: enter it above.", follows: true });
+      const txt = `${incLabel(m)}: the stand increases by ${f(x.v, 2)} Vfm m. R. per ha and year` + (isNum(x.e) ? ` (${f(x.e, 2)} Efm o. R.)` : "") +
+        (isNum(share(x.v)) ? `, ${pct(share(x.v), 2)} of the standing Vorrat of ${f(vfmHa, 0)} Vfm/ha per year` : "") + ".";
+      if (kind === "compact") return tile(label, statFor(m, txt), { value: vf(x.v), statement: txt, follows: true,
+        extra: [{ label: "Efm o. R.", text: ef(x.e) }, { label: "trial area", text: isNum(x.v) && area ? f(x.v * area, 1) + " Vfm/yr" : "–" }, { label: "of the Vorrat", text: pct(share(x.v), 2) + " /yr" }] });
+      if (kind === "vfm") return tile(label, statFor(m, txt), { value: vf(x.v), statement: txt, follows: true });
+      if (kind === "efm") return tile(label, entry(x.e, "Harvest volume under bark: the Vfm increment times the volume-weighted reduction factor of the species."), { value: ef(x.e), noci: true, follows: true });
+      if (kind === "total") return tile(label, entry(x.v, `Increment of the ${f(area, 2)} ha trial area per year (Vfm m. R.)` + (isNum(x.e) ? `; ${f(x.e * area, 1)} Efm o. R. per year.` : ".")),
+        { value: isNum(x.v) && area ? f(x.v * area, 1) + " Vfm/yr" : "–", noci: true, follows: true, extra: [{ label: "Efm o. R.", text: isNum(x.e) && area ? f(x.e * area, 1) + " Efm/yr" : "–" }] });
+      return tile(label, entry(share(x.v), `The increment divided by the standing Vorrat of the field trees (${f(vfmHa, 1)} Vfm/ha from the volume section above, which follows the species groups).`),
+        { value: pct(share(x.v), 2) + " per year", noci: true, follows: true });
+    };
+    if (INC.zm === "all") methods.forEach((m) => g.appendChild(mTile(m, "Increment, " + incLabel(m), "compact")));
+    else {
+      const m = INC.zm;
+      g.append(mTile(m, "Increment (Vfm m. R. per ha and year)", "vfm"), mTile(m, "Increment (Efm o. R. per ha and year)", "efm"),
+        mTile(m, "Total increment per year, trial area", "total"), mTile(m, "Increment as share of the Vorrat", "share"));
+    }
+    if (methods.includes("measured") && cm) {
+      const sTxt = syears.map((y) => `${INC.gs[y]} (${y})`).join(", ");
+      g.append(tile("Increment with one height curve for both dates (comparison)", entry(cm.paiStatic, `Volume growth of the surviving trees alone, with the height-diameter curve of the current survey at both dates, per ha and year (Vfm m. R.); rescaled to ${sTxt} growing seasons. A comparison; heights grow only along the curve.`, cm.ns),
+        { value: vf(cm.paiStatic), noci: true, follows: true }),
+        tile("Mean diameter increment of the surviving trees", entry(cm.dbhMm, `Mean diameter increment of the surviving trees (mm per year), rescaled to ${sTxt} growing seasons.`, cm.ns),
+          { value: isNum(cm.dbhMm) ? f(cm.dbhMm, 2) + " mm/yr" : "–", noci: true, follows: true }));
+      if (!mExact) dyn.appendChild(h("p", { class: "legend-note", text: "Measured increment recalculated with changed parameters or for a Parzelle selection; no confidence interval." }));
+    }
+    if (methods.includes("yield") && st) {
+      const gehr = /gehrhardt/i.test(st.yt || "");
+      const siTxt = `Site index of the stand from the height of the quadratic-mean-diameter tree at the assumed age (${st.yt || "yield table"}).` +
+        (gehr ? " In the spruce table of Gehrhardt (1921) the site index is a yield class: a lower value means a better site, and it is not a height." : "") +
+        (st.ex === 1 ? " The site index lies outside the table, so the table values are extrapolated." : "");
+      g.append(tile("Site index", entry(st.si, siTxt), { value: f(st.si, 2), noci: true, follows: true, extra: [{ label: "yield table", text: st.yt || "–" }] }),
+        tile("Stocking level", entry(st.sl, "Basal area of the stand over the table basal area at the site index and age; the table increment is multiplied by it where it is below 1."), { value: f(st.sl, 2), noci: true, follows: true }),
+        tile("Table increment, before stocking level", entry(st.pt, "Increment of the yield table at the site index of the stand, before the stocking level is applied."), { value: vf(st.pt), noci: true, follows: true }),
+        tile("Mean annual increment (dGZ), table", entry(st.mt, "Mean annual increment of the yield table at the site index of the stand."), { value: vf(st.mt), noci: true, follows: true }));
+    }
+
+    // ledger of the measured increment
+    if (methods.includes("measured") && cm) {
+      const lc = card(dyn, "Ledger of the measured increment", "Increment = V alive at the current survey + V removed - V alive at the 2020 survey, per ha of the surveyed plot area (Vfm m. R.). Follows the Parzelle filter and the parameters above.");
+      lc.setAttribute("data-ledger", "measured");
+      const ph = (v) => (isNum(v) ? f(v / cm.area, 2) : "–"), one = cm.seasons.size === 1 ? [...cm.seasons][0] : null;
+      const rows = [
+        { l: "V alive at the 2020 survey, V(t1)", v: ph(cm.t1) + " Vfm/ha", n: "all trees alive in 2020, GRI volume with the 2020 height-diameter curve" },
+        { l: "V alive at the current survey, V(t2)", v: ph(cm.t2) + " Vfm/ha", n: "the surviving trees, GRI volume with the current height-diameter curve" },
+        { l: "V removed", v: ph(cm.rem) + " Vfm/ha", n: `2020 volume of the trees removed earlier (${ph(cm.rem0)} Vfm/ha) plus ${f(INC.rg * 100, 0)} % of the relative growth of the surviving trees` },
+        { l: "Increment over the period", v: ph(cm.incr) + " Vfm/ha", n: "V(t2) + V removed - V(t1)" },
+        { l: "Periodic annual increment, Vfm m. R.", v: f(cm.pai, 2) + " Vfm/ha/yr", n: one ? `increment / ${one} growing seasons` : "increment / growing seasons of each Parzelle" },
+        { l: "Periodic annual increment, Efm o. R.", v: f(cm.paiE, 2) + " Efm/ha/yr", n: `Vfm increment x volume-weighted reduction factor ${f(cm.efmf, 3)}` }];
+      lc.appendChild(mkTable([{ k: "l", label: "Term", cls: "l" }, { k: "v", label: "Value" }, { k: "n", label: "Calculation", cls: "l" }], rows));
+      lc.appendChild(h("p", { class: "legend-note", text: `Surviving trees: ${cm.ns}; trees removed earlier: ${cm.nR}; missing trees: ${cm.nM}; trees excluded for an implausible diameter change: ${cm.nX}; area ${f(cm.area, 2)} ha.` }));
+    }
+
+    // per Parzelle
+    const grid = h("div", { class: "grid wide" });
+    dyn.appendChild(grid);
+    const ps = parzF().map((p) => String(p.parzelle)).filter((p) => BA[p]);
+    const yv = (m, p) => { if (m === "measured") { const c1 = calcM([p], INC.gs, INC.rg); return c1 ? c1.pai : null; } const a = agePz(p); if (a == null) return null; const r = rowAt(p, a); return m === "yield" ? r.py : r.pg; };
+    let c = card(grid, INC.zm === "all" ? "Per Parzelle: increment by the three methods" : "Per Parzelle: increment, " + incLabel(INC.zm), "Increment of the standing volume (Vfm m. R. per ha and year). Follows the Parzelle filter. Parzellen without an age have no value for the age-dependent methods.");
+    plot(c, methods.map((m) => ({ type: "bar", name: incLabel(m), x: ps, y: ps.map((p) => yv(m, p)), marker: { color: incCol(m) } })),
+      { barmode: "group", xaxis: { title: "Parzelle", type: "category", tickfont: { size: 9 } }, yaxis: { title: "Increment (Vfm m. R. per ha and year)" } });
+    if (INC.zm === "all") {
+      const rows = ps.map((p) => { const a = agePz(p), r = a == null ? null : rowAt(p, a);
+        return { p, age: a, sp: BA[p].main_species, yt: BA[p].yield_table, si: r && r.si, sl: r && r.sl, y: yv("yield", p), g: yv("growth", p), m: yv("measured", p) }; });
+      c.appendChild(mkTable([{ k: "p", label: "Parzelle" }, { k: "age", label: "Age used", fmt: (r) => (r.age == null ? "–" : String(r.age)) }, { k: "sp", label: "Main species", cls: "l" },
+        { k: "yt", label: "Yield table", cls: "l" }, { k: "si", label: "Site index", fmt: (r) => f(r.si, 2) }, { k: "sl", label: "Stocking level", fmt: (r) => f(r.sl, 2) },
+        { k: "y", label: "Yield table (Vfm/ha/yr)", fmt: (r) => f(r.y, 2) }, { k: "g", label: "Tree growth (Vfm/ha/yr)", fmt: (r) => f(r.g, 2) }, { k: "m", label: "Measured (Vfm/ha/yr)", fmt: (r) => f(r.m, 2) }], rows));
+    }
+
+    // against age
+    const key = F.p !== "all" && BA[F.p] ? F.p : "stand", e = BA[key];
+    c = card(grid, "Increment against assumed stand age", `Predicted increment for ${key === "stand" ? "the stand" : "Parzelle " + key} for every stand age of the grid, with the measured increment as a horizontal line: it shows how much the prediction depends on the age. Dashed: the site index lies outside the yield table (extrapolated). Follows the Parzelle filter.`);
+    const xs = []; for (let a = a0; a <= a1; a++) xs.push(a);
+    const tr = [];
+    if (e.ex.some((v) => v === 1)) tr.push({ type: "scatter", mode: "lines", name: "Yield table, site index extrapolated", x: xs, y: e.py, line: { color: incCol("yield"), width: 2, dash: "dash" }, hovertemplate: "age %{x}: %{y:.2f} Vfm/ha/yr<extra>Yield table (extrapolated)</extra>" });
+    tr.push({ type: "scatter", mode: "lines", name: incLabel("yield"), x: xs, y: e.py.map((v, i) => (e.ex[i] === 1 ? null : v)), line: { color: incCol("yield"), width: 2.5 }, hovertemplate: "age %{x}: %{y:.2f} Vfm/ha/yr<extra>Yield table</extra>" },
+      { type: "scatter", mode: "lines", name: incLabel("growth"), x: xs, y: e.pg, line: { color: incCol("growth"), width: 2.5 }, hovertemplate: "age %{x}: %{y:.2f} Vfm/ha/yr<extra>Tree growth functions</extra>" });
+    const mr = calcM(key === "stand" ? allKeys : [key], INC.gs, INC.rg);
+    if (mr && isNum(mr.pai)) tr.push({ type: "scatter", mode: "lines", name: incLabel("measured"), x: [a0, a1], y: [mr.pai, mr.pai], line: { color: incCol("measured"), width: 2.5, dash: "dot" }, hovertemplate: "%{y:.2f} Vfm/ha/yr<extra>Measured</extra>" });
+    const mk = key === "stand" ? INC.age : agePz(key), lay = { xaxis: { title: `Assumed stand age in ${ref} (years)` }, yaxis: { title: "Increment (Vfm m. R. per ha and year)" } };
+    if (isNum(mk)) {
+      lay.shapes = [{ type: "line", xref: "x", yref: "paper", x0: mk, x1: mk, y0: 0, y1: 1, line: { color: C.ink2, width: 1.5, dash: "dot" } }];
+      lay.annotations = [{ x: mk, y: 1, xref: "x", yref: "paper", text: "chosen age " + mk, showarrow: false, xanchor: "left", yanchor: "top", font: { size: 11, color: C.ink2 } }];
+    }
+    plot(c, tr, lay, { cls: "tall" });
+
+    // notes
+    if (methods.includes("yield") && st && st.ex === 1) note("warn", "Site index extrapolated.", `At this age the site index lies outside the yield table (${st.yt || "yield table"}), so the table values are extrapolated.`);
+    if (methods.includes("yield") && st && st.ao === 1) note("warn", "Age outside the yield table.", "The age lies outside the age range of the table; the nearest tabulated age is used.");
+    methods.forEach((m) => { if (caveat(m)) dyn.appendChild(h("p", { class: "legend-note" }, h("span", { class: "inc-key", style: "background:" + incCol(m) }), caveat(m))); });
+    if (methods.includes("measured")) [
+      "The trees felled in the 2026 harvest were measured before felling and count as alive at the current survey.",
+      "The reference area is the surveyed plot area (convex hull of the four corner points, about 48 m x 30 m per Parzelle, gaps included).",
+      "No ingrowth and no removal dates are recorded."].forEach((t) => dyn.appendChild(h("p", { class: "legend-note", text: t })));
+    if (!info.isDefault()) note("info", "Species assignment.", "The increment uses the configured species assignment and does not follow the species-group dropdowns above; only the share of the Vorrat does.");
+  }
+  return (calc) => { last = calc; redraw(); };
 }
 
 /* ======================================================================
