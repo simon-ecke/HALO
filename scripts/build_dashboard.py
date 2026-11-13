@@ -57,7 +57,7 @@ def build(config_path, tables_dir=None, out_dir=None) -> Path:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config")
-    ap.add_argument("--tables-dir", default=None, help="fallback folder for tables missing in the site's tables folder")
+    ap.add_argument("--tables-dir", default=None, help="read a table from this folder if it exists there, else from the site's tables folder")
     ap.add_argument("--out", default=None)
     a = ap.parse_args(argv)
     out = build(a.config, a.tables_dir, a.out)

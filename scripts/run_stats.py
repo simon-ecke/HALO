@@ -2,9 +2,9 @@
 
     python scripts/run_stats.py config/site_155.yaml [--tables-dir DIR]
 
-Reads the per-tree tables (default cfg.tables_dir) and writes stats.json next to
-them in the output folder. With --tables-dir (testing against another run) the
-file goes to outputs/app/site155/stats.json instead, so the other run is never touched.
+Reads the per-tree tables (default cfg.tables_dir) and writes stats.json to the config's output folder.
+The file always goes there, also with --tables-dir (testing against another run), so the other run is
+never touched.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def run(cfg, tables_dir=None, write_tables: bool = False, height_variants: bool 
             volume_gri.run_volume_gri(cfg, tables_dir)
         if increment is not None:
             increment.run_increment(cfg, tables_dir)
-    out_dir = ROOT / 'outputs' / 'app' / 'site155' if tables_dir else cfg.output_dir
+    out_dir = cfg.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / 'stats.json'
     path.write_text(json.dumps(entries, indent=1, ensure_ascii=False), encoding='utf-8')

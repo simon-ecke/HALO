@@ -28,7 +28,7 @@ A raster-based local-maximum detection on the canopy height model is included as
 | `scripts/` | Command-line entry points for the pipeline, the statistics and the dashboard |
 | `config/` | Site configuration (`site_155.yaml`), its JSON schema and the volume form factors |
 | `app/` | Static HTML/JavaScript dashboard |
-| `notebooks/` | Processing notebook and a stem-position check against the orthophotos |
+| `notebooks/` | Processing notebook, a stem-position check against the orthophotos, and the dashboard notebook that runs the whole chain |
 | `tests/` | Unit tests and regression tests |
 | `docs/` | Method and configuration documentation |
 
@@ -57,7 +57,7 @@ or write the path into a file `data_root.local` in the project root (excluded fr
 ```bash
 python -m core.validate config/site_155.yaml          # check the configuration
 python scripts/run_pipeline.py config/site_155.yaml   # all stages; --stage NAME runs one, --force recomputes
-python scripts/run_stats.py config/site_155.yaml      # statistics with bootstrap intervals -> stats.json
+python scripts/run_stats.py config/site_155.yaml --write-tables   # statistics -> stats.json; also writes the analysis tables the dashboard needs
 python scripts/build_dashboard.py config/site_155.yaml
 ```
 
@@ -87,6 +87,8 @@ This writes `config/volume_gri_coefficients.csv` and the reference grids `tests/
 git config filter.strip-output.clean "python scripts/strip_notebook_output.py"
 git config filter.strip-output.smudge cat
 ```
+
+`notebooks/04_dashboard.ipynb` runs the whole chain for one site config: validation, pipeline, statistics, checks and the dashboard build. It calls only functions of `core/` and `scripts/`, shows the intermediate tables and computes nothing itself. To run another site, change `CONFIG` in its first cell.
 
 ## Tests
 
